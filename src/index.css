@@ -1,0 +1,318 @@
+@import "tailwindcss";
+@import "katex/dist/katex.min.css";
+
+/* Dark mode is a class the app sets, never a media query: the theme is a
+   user choice here, not the OS's. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* One palette, two values each. Components reference the variables, so a
+   component almost never needs a dark: variant of its own. */
+/* Plain grayscale — no warm tint. */
+:root {
+  --bg: #ffffff;
+  --panel: #f4f4f4;
+  --panel-2: #ececec;
+  --raised: #ffffff;
+  --border: #e2e2e2;
+  --border-strong: #d4d4d4;
+  --text: #000000;
+  --text-soft: #333333;
+  --muted: #737373;
+  --faint: #a3a3a3;
+  --hover: #ececec;
+  --active: #e0e0e0;
+  --focus: #b5b5b5;
+  --danger: #9a3f36;
+  --danger-bg: #f9eeec;
+  --danger-border: #e2c3bf;
+}
+
+/* True black — OLED. --bg is pure #000 (actual black pixels off on an OLED
+   panel); everything above it is a step of grey so panels/cards still read
+   as distinct surfaces against it, same layering the old slate theme had,
+   just re-based off black instead of charcoal. Text goes correspondingly
+   brighter, since near-white reads as low-contrast/grey against true black
+   in a way it didn't against the old lighter background. */
+.dark {
+  --bg: #000000;
+  --panel: #0d0d0d;
+  --panel-2: #161616;
+  --raised: #131313;
+  --border: #232323;
+  --border-strong: #333333;
+  --text: #f5f5f5;
+  --text-soft: #d8d8d8;
+  --muted: #9a9a9a;
+  --faint: #6b6b6b;
+  --hover: #1a1a1a;
+  --active: #262626;
+  --focus: #4a4a4a;
+  --danger: #e0837c;
+  --danger-bg: #170d0c;
+  --danger-border: #3a201e;
+}
+
+@theme inline {
+  --font-serif: "Playfair Display", Georgia, "Times New Roman", serif;
+  --font-sans: "Google Sans", "Google Sans Text", ui-sans-serif, -apple-system,
+    "Segoe UI", system-ui, sans-serif;
+}
+
+/* Sizing tokens for the sidebar and conversation chrome. Equal to the
+   desktop pixel values by default — components reference these instead of a
+   literal size, but nothing changes for desktop until the mobile media
+   query below overrides them. */
+:root {
+  --fs-xs: 11.5px; /* "Recents" label */
+  --fs-sm: 13px; /* search input, empty-list hint */
+  --fs-sm2: 13.5px; /* chat list rows */
+  --fs-meta: 12.5px; /* message timestamp row, reasoning toggle + content */
+  --fs-base: 14px; /* sidebar nav items */
+  --fs-base2: 14.5px; /* chat header title */
+  --fs-md: 15px; /* composer + edit textareas, message bubble text */
+  --fs-lg: 27px; /* empty-conversation heading */
+  --fs-body: 15.5px; /* assistant message prose */
+}
+
+/* Touch phones only — desktop keeps the exact sizes above, even resized
+   narrow. max-width alone isn't enough: a desktop browser window shrunk down
+   matches the same breakpoint a phone does, and then this fired there too —
+   sized up because the desktop density read as cramped on a phone, and the
+   composer/search inputs specifically need to clear 16px regardless, since
+   iOS Safari auto-zooms the whole page on focusing any input smaller than
+   that (see the mobile input rule further down — that one is unconditional
+   within its own scope, this is the general "make it bigger" pass).
+   pointer: coarse alone isn't enough either: plenty of Windows laptops have
+   a touchscreen digitizer *in addition to* a mouse/trackpad, and report
+   pointer: coarse for that reason even while being driven entirely by
+   keyboard and mouse. hover: none is what actually distinguishes them — a
+   laptop with a mouse/trackpad reports hover: hover regardless of any
+   touchscreen it also has; only a device with no fine pointer available at
+   all, an actual phone, reports hover: none. (Mirrors src/isPhone.js,
+   which the equivalent JS checks — sidebar collapse, Enter-to-send — use;
+   CSS media features can't reference a JS module, so it's duplicated here.) */
+@media (max-width: 767px) and (hover: none) and (pointer: coarse) {
+  :root {
+    --fs-xs: 13px;
+    --fs-sm: 16px;
+    --fs-sm2: 15.5px;
+    --fs-meta: 14.5px;
+    --fs-base: 16px;
+    --fs-base2: 17px;
+    --fs-md: 17px;
+    --fs-lg: 30px;
+    --fs-body: 17.5px;
+  }
+
+  /* A long press on message text raises iOS's own selection handles and
+     Copy/Translate/Look Up callout — it fires *underneath* this app's own
+     tap targets (Edit, Copy, the model picker button visible right below)
+     and its floating menu can cover them entirely, as it did here. The
+     message-actions row already offers Copy; there's nothing this callout
+     does that isn't already reachable another way. -webkit-touch-callout is
+     what actually suppresses the callout itself — user-select alone still
+     let a press-and-hold start selecting text without showing it, but
+     -webkit-user-select is included too since it's what Safari specifically
+     keys off. Scoped to the messages column: the edit-message and composer
+     textareas need selection to work normally, so it's re-enabled on any
+     input/textarea a touch is on. */
+  .select-none-touch {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  .select-none-touch textarea,
+  .select-none-touch input {
+    -webkit-touch-callout: default;
+    -webkit-user-select: text;
+    user-select: text;
+  }
+}
+
+
+
+/* The document itself never scrolls — every scrollable region in this app
+   (message list, sidebar) owns its own overflow. Letting the document scroll
+   is what put the header off-screen: measured on-device, #root sat at
+   top: -136 (and -288 with the keyboard up) purely because the document had
+   been scrolled that far, taking the header — display: flex, 56px tall,
+   perfectly healthy at document y=0 — up out of view with it.
+   overscroll-behavior stops the rubber-band drag doing the same thing. */
+html,
+body {
+  /* --app-height, not 100%: 100% resolves against a layout viewport that
+     stays full height when the keyboard opens, leaving the document ~288px
+     taller than the visible window. That surplus is precisely the room
+     Safari pans into to reveal the focused composer, which is what carried
+     the header off the top. Sizing the document to the visible height
+     leaves nowhere to pan, so the header cannot be moved at all — better
+     than letting the pan happen and correcting it afterwards. */
+  height: var(--app-height, 100%);
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+/* Sized to what's actually visible (see viewportHeight.js), not to 100% of a
+   layout viewport that doesn't shrink for the keyboard. With root exactly
+   the height of the visible window there is no overflow to scroll in the
+   first place, which is what keeps the header where it belongs. The 100%
+   fallback covers the first paint before the first measurement lands. */
+#root {
+  height: var(--app-height, 100%);
+  overflow: hidden;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  /* iOS Safari's default tap feedback: a translucent grey overlay while a
+     button is pressed, which can read as "stuck dim" on release if the next
+     repaint lands a frame late. Real <button> elements (the sidebar's nav
+     items, the account row's icon buttons) get this; the conversation list
+     rows don't, since those are plain divs with an onClick — which is
+     exactly the split in what looked dimmed and what didn't. The app draws
+     its own hover/active states (hover:bg-[var(--hover)] etc.), so this
+     native one is redundant on top of them anyway. */
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Headings, tabs and table labels — a touch narrower than the body copy. */
+h1,
+h2,
+h3,
+th,
+.ui-tight {
+  letter-spacing: -0.01em;
+}
+
+/* The wordmark and the empty-state line — the only serif in the app. */
+.wordmark {
+  font-family: var(--font-serif);
+  font-style: italic;
+}
+
+/* Toggling the theme swaps every CSS variable in one frame, so anything
+   reading one would otherwise hard-cut to its new colour. This cross-fades
+   the swap instead, scoped to colour-ish properties only so it doesn't
+   reach transform/opacity/width and the like.
+
+   Wrapped in @layer base — cascade layers ignore specificity across layer
+   boundaries, and *unlayered* rules always outrank *layered* ones no matter
+   how specific the layered selector is. Tailwind's utilities (transition-*
+   included) all live inside its own layer, so a plain top-level `*` rule
+   here would have silently beaten every one of them, on every element, for
+   these six properties — which is exactly what made transition-[width] on
+   the sidebar do nothing. Inside @layer base, a one-off utility class on a
+   single element (higher specificity, same or lower layer) wins the way
+   it's supposed to. */
+@layer base {
+  *,
+  *::before,
+  *::after {
+    /* Background/border only, deliberately not text colour, icon fill, or
+       icon stroke — those switch instantly on theme change. A fading
+       background under text/icons that are still snapping made the switch
+       read as flickery rather than smooth. */
+    transition:
+      background-color 160ms ease,
+      border-color 160ms ease,
+      outline-color 160ms ease;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      transition: none;
+    }
+  }
+}
+
+/* No visible scrollbars, anywhere — scrolling itself (wheel, trackpad,
+   touch, keyboard) is untouched, there's just nothing drawn for it. A
+   scrollbar this invisible can never reserve layout space either, in any
+   engine, which is what used to make a panel's content shift sideways the
+   moment it crossed from "fits" to "scrolls" — so this replaces the
+   scrollbar-gutter workaround rather than needing it alongside. */
+* {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* legacy Edge */
+}
+*::-webkit-scrollbar {
+  display: none; /* Safari, Chrome */
+  width: 0;
+  height: 0;
+}
+
+/* iOS Safari zooms the whole page in the moment a focused input's font-size
+   reads under 16px. Auto-zoom is a phone-Safari thing, not a desktop one, so
+   this only needs to apply inside the mobile breakpoint — where every input
+   this app ships has already been sized to at least 16px via the tokens
+   above, making this a fallback for any input that gets added later without
+   one, not something actively fixing anything today.
+
+   In @layer base, unlike the colour-transition rule above: that one had to
+   win over every element unconditionally, so it stayed unlayered on
+   purpose. This one is the opposite — it must be *weaker* than a
+   text-[Npx]-style utility so a deliberately-larger size (e.g. the
+   composer's --fs-md, 17px on mobile) isn't flattened back down to exactly
+   16px. Utilities live in Tailwind's own (higher-priority) layer, so a
+   base-layer rule here only fills in where nothing more specific exists. */
+@layer base {
+  /* Same touch-primary check as above (see its comment) — the auto-zoom
+     this guards against is a touchscreen-Safari behaviour, not something a
+     mouse-driven window can trigger regardless of how narrow it is. */
+  @media (max-width: 767px) and (hover: none) and (pointer: coarse) {
+    input,
+    textarea {
+      font-size: 16px;
+    }
+  }
+}
+
+/* Range inputs: a flat track and a grey thumb, matching the sampler
+   screenshots. */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 999px;
+  background: linear-gradient(
+    to right,
+    var(--muted) 0%,
+    var(--muted) var(--fill, 50%),
+    var(--border-strong) var(--fill, 50%),
+    var(--border-strong) 100%
+  );
+  outline: none;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  height: 16px;
+  width: 16px;
+  border-radius: 999px;
+  background: var(--muted);
+  cursor: pointer;
+  border: none;
+}
+input[type="range"]::-moz-range-thumb {
+  height: 16px;
+  width: 16px;
+  border: none;
+  border-radius: 999px;
+  background: var(--muted);
+  cursor: pointer;
+}
+
+/* KaTeX inherits the message colour rather than shipping its own. */
+.katex {
+  font-size: 1.02em;
+  color: inherit;
+}
+.katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 2px 0;
+}

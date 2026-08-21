@@ -1,0 +1,19 @@
+services:
+  aientic:
+    build: .
+    container_name: aientic
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      # Where users, endpoints, sampler settings and conversations live.
+      AIENTIC_DATA_DIR: /data
+      AIENTIC_PORT: "8080"
+      # Cookies are signed with this. Change it; leaving it unset means
+      # every restart invalidates existing sessions.
+      AIENTIC_SECRET: "change-me"
+    volumes:
+      - aientic-data:/data
+
+volumes:
+  aientic-data:
