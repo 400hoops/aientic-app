@@ -142,7 +142,7 @@ https://<your-server-ip>:8080
 | `AIENTIC_API_ORIGIN` | `http://127.0.0.1:3001` | Dev proxy target for Vite |
 | `AIENTIC_SECRET` | a generated key, kept in `secret.key` | Encrypts upstream API keys at rest |
 | `AIENTIC_TLS_CERT`, `AIENTIC_TLS_KEY` | unset (plain HTTP) | PEM cert/key paths — set both to serve HTTPS directly |
-| `AIENTIC_TRUST_PROXY` | unset (no proxies trusted) | Set behind a reverse proxy so `X-Forwarded-*` is honoured: `1` for one proxy hop, or `loopback` / a CIDR / a list. Needed for the session cookie's `Secure` flag when the proxy terminates TLS. Off by default on purpose: without it, a direct client's `X-Forwarded-For` would let anyone spoof `req.ip` and walk past the login rate limit |
+| `AIENTIC_TRUST_PROXY` | unset (no proxies trusted) | Set behind a reverse proxy so `X-Forwarded-*` is honoured: `1` for one proxy hop, or `loopback` / a CIDR / a list. Off by default on purpose: without it, a direct client's `X-Forwarded-For` would let anyone spoof `req.ip` and walk past the login rate limit |
 
 ## How it stores things
 
@@ -166,11 +166,16 @@ and a note.
 This is built for a trusted network: a LAN, or a tailnet. `/api/auth/login`
 is rate-limited (10 attempts per IP per 5 minutes) and sampler values are
 bounds-checked, both on by default. HTTPS is opt-in — set `AIENTIC_TLS_CERT`
-and `AIENTIC_TLS_KEY` to PEM files and the server terminates TLS itself; the
-session cookie's `Secure` flag follows automatically. To terminate TLS at a
-reverse proxy in front instead, set `AIENTIC_TRUST_PROXY` (see the table
-above) so the `Secure` flag and per-IP rate limiting see through it; direct
-clients' `X-Forwarded-*` headers are otherwise ignored on purpose.
+and `AIENTIC_TLS_KEY` to PEM files and the server terminates TLS itself. The
+session cookie deliberately carries no `Secure` flag: deployments are
+commonly reached by bare IP over plain HTTP, or over HTTPS with a
+self-signed / LAN-CA cert, and browsers (Chrome in particular) will not
+store or send `Secure` cookies on such origins — the flag would simply lock
+you out of login. `httpOnly`, `SameSite=lax` and the random 30-day token
+do the work. To terminate TLS at a reverse proxy in front instead, set
+`AIENTIC_TRUST_PROXY` (see the table above) so per-IP rate limiting sees
+through it; direct clients' `X-Forwarded-*` headers are otherwise ignored
+on purpose.
 
 The served frontend ships with security headers: a strict-ish
 `Content-Security-Policy` (`script-src 'self'`, no inline scripts, with only

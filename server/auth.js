@@ -12,20 +12,18 @@ import { db, save, uid } from "./storage.js";
 export const COOKIE = "aientic_session";
 const SESSION_TTL = 1000 * 60 * 60 * 24 * 30; // 30 days
 
-// secure is decided per-request, not hardcoded: this app's default is plain
-// HTTP on a LAN, where a cookie marked secure would just never be sent at
-// all. req.secure is true precisely when the connection actually is
-// encrypted — Node's own TLS when AIENTIC_TLS_CERT/KEY are set, or a
-// reverse proxy's TLS termination, once AIENTIC_TRUST_PROXY is set (see
-// index.js) — so this upgrades itself automatically the moment either is
-// in place.
-const cookieOptions = (req) => ({
+// No `secure` flag: a lot of deployments reach this app by plain IP — over
+// plain HTTP, or over HTTPS with a self-signed / LAN-CA cert — and browsers
+// (Chrome in particular) will not store or send Secure cookies on such
+// origins, which locks the user out of login. httpOnly + sameSite=lax + a
+// 30-day random token still does the heavy lifting; TLS is about the
+// payload, the cookie just has to actually arrive.
+const cookieOptions = {
   httpOnly: true,
-  secure: req.secure,
   sameSite: "lax",
   maxAge: SESSION_TTL,
   path: "/",
-});
+};
 
 export const hashPassword = (plain) => bcrypt.hashSync(plain, 12);
 
@@ -56,7 +54,7 @@ export function startSession(req, res, user) {
   const token = crypto.randomBytes(32).toString("hex");
   db.sessions[token] = { userId: user.id, createdAt: Date.now() };
   save();
-  res.cookie(COOKIE, token, cookieOptions(req));
+  res.cookie(COOKIE, token, cookieOptions);
   return token;
 }
 

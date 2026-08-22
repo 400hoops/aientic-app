@@ -7,9 +7,9 @@
  * Deployment assumption: a trusted network (LAN or tailnet) — see README.
  * HTTPS is opt-in (AIENTIC_TLS_CERT/KEY); login rate limiting is on by
  * default. Reverse-proxy trust is also opt-in (AIENTIC_TRUST_PROXY), so a
- * direct client's X-Forwarded-* headers can't spoof req.ip / req.secure;
- * CSRF protection is still intentionally skipped, since cookies are
- * sameSite=lax and nothing here performs a state-changing GET.
+ * direct client's X-Forwarded-* headers can't spoof req.ip; CSRF
+ * protection is still intentionally skipped, since cookies are sameSite=lax
+ * and nothing here performs a state-changing GET.
  */
 import path from "node:path";
 import fs from "node:fs";
@@ -53,10 +53,9 @@ const app = express();
 
 // Off by default: with no reverse proxy in front, a *client's* X-Forwarded-*
 // headers must not be honoured — trusting them let anyone on the LAN spoof
-// req.ip (walking straight past the login rate limit) or fake req.secure.
-// Behind a reverse proxy (in particular one that terminates TLS, so the
-// session cookie's Secure flag should engage), set AIENTIC_TRUST_PROXY:
-// "1" for one proxy hop, or "loopback" / a CIDR / a list of those.
+// req.ip (walking straight past the login rate limit). Behind a reverse
+// proxy, set AIENTIC_TRUST_PROXY: "1" for one proxy hop, or "loopback" /
+// a CIDR / a list of those.
 const trustProxy = process.env.AIENTIC_TRUST_PROXY;
 if (trustProxy)
   app.set(
@@ -746,11 +745,9 @@ if (fs.existsSync(dist)) {
 app.use("/api", (_req, res) => bad(res, 404, "No such route"));
 
 // Both env vars point at PEM files. Set neither and this is exactly the
-// plain-HTTP LAN server it always was; set both and req.secure (and so the
-// session cookie's secure flag, and clients that expect it) starts working
-// with no other change. Set one without the other and refuse to start,
-// rather than silently falling back to unencrypted with a half-finished cert
-// config.
+// plain-HTTP LAN server it always was; set both and the server terminates
+// TLS itself. Set one without the other and refuse to start, rather than
+// silently falling back to unencrypted with a half-finished cert config.
 const tlsCertPath = process.env.AIENTIC_TLS_CERT;
 const tlsKeyPath = process.env.AIENTIC_TLS_KEY;
 if (!!tlsCertPath !== !!tlsKeyPath) {
