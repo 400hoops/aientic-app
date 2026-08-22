@@ -133,6 +133,14 @@ Open your browser and navigate to:
 https://<your-server-ip>:8080
 ```
 
+**Optional — re-enable `Secure` cookies:** while the certificate is
+self-signed (or its CA isn't installed on each client device), leave the
+session cookie as-is — browsers won't send `Secure` cookies on an origin
+whose certificate doesn't validate, which makes login impossible. Once
+every device trusts the cert (a public CA, or the mkcert root CA installed
+on each device — see "A trusted cert without a public domain" below), add
+`AIENTIC_SECURE_COOKIES: auto` to the environment to put the flag back.
+
 ## Configuration
 
 | Variable | Default | What it does |
@@ -142,6 +150,7 @@ https://<your-server-ip>:8080
 | `AIENTIC_API_ORIGIN` | `http://127.0.0.1:3001` | Dev proxy target for Vite |
 | `AIENTIC_SECRET` | a generated key, kept in `secret.key` | Encrypts upstream API keys at rest |
 | `AIENTIC_TLS_CERT`, `AIENTIC_TLS_KEY` | unset (plain HTTP) | PEM cert/key paths — set both to serve HTTPS directly |
+| `AIENTIC_SECURE_COOKIES` | `off` | `Secure` attribute on the session cookie: `off` (works with self-signed / bare-IP setups), `auto` (set when the connection is TLS — correct once every client trusts the cert), `on` (always) |
 | `AIENTIC_TRUST_PROXY` | unset (no proxies trusted) | Set behind a reverse proxy so `X-Forwarded-*` is honoured: `1` for one proxy hop, or `loopback` / a CIDR / a list. Off by default on purpose: without it, a direct client's `X-Forwarded-For` would let anyone spoof `req.ip` and walk past the login rate limit |
 
 ## How it stores things
@@ -170,12 +179,14 @@ This is built for a trusted network: a LAN, or a tailnet. `/api/auth/login`
 is rate-limited (10 attempts per IP per 5 minutes) and sampler values are
 bounds-checked, both on by default. HTTPS is opt-in — set `AIENTIC_TLS_CERT`
 and `AIENTIC_TLS_KEY` to PEM files and the server terminates TLS itself. The
-session cookie deliberately carries no `Secure` flag: deployments are
-commonly reached by bare IP over plain HTTP, or over HTTPS with a
-self-signed / LAN-CA cert, and browsers (Chrome in particular) will not
-store or send `Secure` cookies on such origins — the flag would simply lock
-you out of login. `httpOnly`, `SameSite=lax` and the random 30-day token
-do the work. To terminate TLS at a reverse proxy in front instead, set
+session cookie has no `Secure` flag by default: deployments are commonly
+reached by bare IP over plain HTTP, or over HTTPS with a self-signed /
+LAN-CA cert, and browsers (Chrome in particular) will not store or send
+`Secure` cookies on an origin whose certificate doesn't validate — the flag
+would simply lock you out of login. Set `AIENTIC_SECURE_COOKIES=auto` (or
+`on`) to bring it back once every client device trusts the cert; until
+then `httpOnly`, `SameSite=lax` and the random 30-day token do the work. To
+terminate TLS at a reverse proxy in front instead, set
 `AIENTIC_TRUST_PROXY` (see the table above) so per-IP rate limiting sees
 through it; direct clients' `X-Forwarded-*` headers are otherwise ignored
 on purpose.

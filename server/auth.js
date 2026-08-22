@@ -12,18 +12,42 @@ import { db, save, uid } from "./storage.js";
 export const COOKIE = "aientic_session";
 const SESSION_TTL = 1000 * 60 * 60 * 24 * 30; // 30 days
 
-// No `secure` flag: a lot of deployments reach this app by plain IP — over
-// plain HTTP, or over HTTPS with a self-signed / LAN-CA cert — and browsers
-// (Chrome in particular) will not store or send Secure cookies on such
-// origins, which locks the user out of login. httpOnly + sameSite=lax + a
-// 30-day random token still does the heavy lifting; TLS is about the
-// payload, the cookie just has to actually arrive.
-const cookieOptions = {
+// The `Secure` attribute is a setting, not a constant, because the real
+// deployment shapes need different answers:
+//
+//   off  — no flag. Works everywhere, including plain HTTP and HTTPS with
+//          a cert the browser doesn't trust. The default, so a fresh
+//          deployment works no matter how it's reached.
+//   auto — set exactly when the connection is TLS (req.secure, which
+//          honours AIENTIC_TRUST_PROXY). Correct once every client device
+//          actually trusts the cert (public CA, or a root CA installed on
+//          each device).
+//   on   — always set. Use when the app is guaranteed to only ever be
+//          reached over HTTPS.
+//
+// Why it can't just be always-on: browsers (Chrome in particular) will not
+// store or send a Secure cookie on an origin whose certificate failed
+// validation — self-signed, or missing a SAN for the IP it's served from —
+// which silently makes login impossible. The flag is only a win where the
+// chain actually validates.
+const SECURE_COOKIES = (
+  process.env.AIENTIC_SECURE_COOKIES || "off"
+).toLowerCase();
+if (!["off", "auto", "on"].includes(SECURE_COOKIES)) {
+  console.error(
+    `[aientic] AIENTIC_SECURE_COOKIES must be "off", "auto" or "on" (got "${process.env.AIENTIC_SECURE_COOKIES}")`
+  );
+  process.exit(1);
+}
+const secureFor = (req) =>
+  SECURE_COOKIES === "on" || (SECURE_COOKIES === "auto" && req.secure);
+const cookieOptions = (req) => ({
   httpOnly: true,
+  secure: secureFor(req),
   sameSite: "lax",
   maxAge: SESSION_TTL,
   path: "/",
-};
+});
 
 export const hashPassword = (plain) => bcrypt.hashSync(plain, 12);
 
@@ -54,7 +78,7 @@ export function startSession(req, res, user) {
   const token = crypto.randomBytes(32).toString("hex");
   db.sessions[token] = { userId: user.id, createdAt: Date.now() };
   save();
-  res.cookie(COOKIE, token, cookieOptions);
+  res.cookie(COOKIE, token, cookieOptions(req));
   return token;
 }
 
@@ -64,7 +88,9 @@ export function endSession(req, res) {
     delete db.sessions[token];
     save();
   }
-  res.clearCookie(COOKIE, { path: "/" });
+  // Mirror the secure flag so a cookie set with it can be cleared by the
+  // browser on the same origin (matters in "on" mode).
+  res.clearCookie(COOKIE, { path: "/", secure: secureFor(req) });
 }
 
 /** Drops expired sessions and resolves the current one. */
