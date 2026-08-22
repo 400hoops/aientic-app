@@ -43,12 +43,21 @@ fs.mkdirSync(DATA_DIR, { recursive: true });
  * gets the JSON file alone (a backup, a careless copy), not against anyone
  * with access to the data directory itself.
  */
+const sha256 = (data) => crypto.createHash("sha256").update(data).digest();
+
 function loadEncryptionKey() {
   const secret = process.env.AIENTIC_SECRET;
-  if (secret) return crypto.createHash("sha256").update(secret).digest();
+  if (secret) return sha256(secret);
 
   try {
-    return fs.readFileSync(SECRET_FILE);
+    const raw = fs.readFileSync(SECRET_FILE);
+    // A 16/24/32-byte file is the key itself (that's what the generator
+    // below writes, and what older data was encrypted with — keep it raw or
+    // existing values stop decrypting). Anything else is secret *material*
+    // to be hashed into a key: text pasted by hand, or `openssl rand
+    // -base64 32`, which is 44 chars plus a newline. Without the hash,
+    // 45 raw bytes hit AES and the first save throws "Invalid key length".
+    return [16, 24, 32].includes(raw.length) ? raw : sha256(raw);
   } catch (err) {
     if (err.code !== "ENOENT") throw err;
   }
@@ -109,11 +118,13 @@ function flush() {
   if (writing) return;
   writing = true;
   const tmp = FILE + ".tmp";
-  const onDisk = { ...db, keys: {} };
-  for (const [base, value] of Object.entries(db.keys))
-    onDisk.keys[base] = encryptValue(value);
-  const body = JSON.stringify(onDisk, null, 2);
+  // Build the body inside the guard: a failure here used to escape the
+  // debounced timer and crash the whole process mid-save.
   try {
+    const onDisk = { ...db, keys: {} };
+    for (const [base, value] of Object.entries(db.keys))
+      onDisk.keys[base] = encryptValue(value);
+    const body = JSON.stringify(onDisk, null, 2);
     if (fs.existsSync(FILE)) fs.copyFileSync(FILE, BACKUP);
     fs.writeFileSync(tmp, body);
     fs.renameSync(tmp, FILE); // rename is atomic on the same filesystem

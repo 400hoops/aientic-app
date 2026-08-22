@@ -156,10 +156,13 @@ the only file that has to change.
 Upstream API keys are the one field in there that's a real credential rather
 than app state, so they're the one thing encrypted at rest (AES-256-GCM) —
 everything else stays plain JSON. `AIENTIC_SECRET` supplies the encryption
-key; left unset, one is generated on first run and kept in `secret.key`
-next to `data.json`, so encryption is on with zero configuration. Either way
-they're never sent to the browser — the model picker only ever sees a label
-and a note.
+key; left unset, the key comes from `secret.key` next to `data.json`
+(generated on first run if missing), so encryption is on with zero
+configuration. The file may hold any content — a random string, base64,
+whatever — and is hashed to the actual key unless it is exactly 16, 24 or
+32 bytes, in which case those bytes are the key. Either way the keys are
+never sent to the browser — the model picker only ever sees a label and a
+note.
 
 ## Security posture
 
