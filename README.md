@@ -51,6 +51,88 @@ Compose mounts a named volume at `/data` and serves on port 8080. Set
 `AIENTIC_SECRET` to something of your own before exposing it anywhere — see
 "How it stores things" below for what it's actually used for.
 
+## Deploying with Podman
+
+A turnkey server deployment: the public image, TLS terminated in the
+container, data on the host.
+
+### Step 1: Create Host Directories
+
+Set up the required directories on your host machine for application data
+and TLS certificates:
+
+```bash
+mkdir -p ~/data/aientic
+mkdir -p ~/certs/aientic
+```
+
+### Step 2: Configure Secrets and Certificates
+
+Generate a random secret key for the application:
+
+```bash
+openssl rand -base64 32 > ~/data/aientic/secret.key
+```
+
+Place your TLS certificates inside the certs directory:
+
+- `~/certs/aientic/aientic-cert.pem`
+- `~/certs/aientic/aientic-key.pem`
+
+### Step 3: Create docker-compose.yml
+
+Create a `docker-compose.yml` file in your working directory with the
+following configuration:
+
+```yaml
+services:
+  aientic:
+    image: ghcr.io/400hoops/aientic-app:latest
+    ports:
+      - "8080:8080"
+    volumes:
+      - ~/data/aientic:/data:Z,U
+      - ~/certs/aientic:/certs:ro,Z,U
+    environment:
+      - AIENTIC_SECRET=${AIENTIC_SECRET}
+      - AIENTIC_TLS_CERT=/certs/aientic-cert.pem
+      - AIENTIC_TLS_KEY=/certs/aientic-key.pem
+    restart: always
+```
+**Note on Podman Flags:**
+
+- `:Z` handles SELinux context labeling for shared volumes.
+- `:U` automatically adjusts UID/GID mapping for rootless Podman to prevent
+  container permission (EACCES) errors.
+
+### Step 4: Configure the Host Firewall
+
+If you are running firewalld (common on Fedora/RHEL/CentOS), open port 8080
+to allow external and local network traffic:
+
+```bash
+sudo firewall-cmd --permanent --add-port=8080/tcp
+sudo firewall-cmd --reload
+```
+
+(If using UFW on Ubuntu/Debian, use `sudo ufw allow 8080/tcp` instead).
+
+### Step 5: Start the Container
+
+Launch the application container in the background:
+
+```bash
+podman compose up -d --force-recreate aientic
+```
+
+### Accessing the Application
+
+Open your browser and navigate to:
+
+```
+https://<your-server-ip>:8080
+```
+
 ## Configuration
 
 | Variable | Default | What it does |
