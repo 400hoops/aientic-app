@@ -5,10 +5,11 @@
  * server-side, so history follows the account rather than the browser.
  *
  * Deployment assumption: a trusted network (LAN or tailnet) — see README.
- * HTTPS and login rate limiting are opt-in (AIENTIC_TLS_CERT/KEY), off by
- * default so the zero-config LAN case stays zero-config; CSRF protection is
- * still intentionally skipped, since cookies are already sameSite=lax and
- * nothing here performs a state-changing GET.
+ * HTTPS is opt-in (AIENTIC_TLS_CERT/KEY); login rate limiting is on by
+ * default. Reverse-proxy trust is also opt-in (AIENTIC_TRUST_PROXY), so a
+ * direct client's X-Forwarded-* headers can't spoof req.ip / req.secure;
+ * CSRF protection is still intentionally skipped, since cookies are
+ * sameSite=lax and nothing here performs a state-changing GET.
  */
 import path from "node:path";
 import fs from "node:fs";
@@ -33,6 +34,7 @@ import {
 import {
   listModels,
   normaliseBase,
+  isBlockedBase,
   describeUpstreamError,
   fetchServerDefaults,
   fetchRunningModels,
@@ -49,35 +51,80 @@ import {
 const PORT = Number(process.env.AIENTIC_PORT || process.env.PORT || 3001);
 const app = express();
 
-// Harmless on a LAN with no proxy in front (X-Forwarded-* is simply absent,
-// so req.secure falls back to the actual connection); lets req.secure read
-// correctly the moment a reverse proxy terminating TLS is added, without
-// needing another config knob for that case specifically.
-app.set("trust proxy", 1);
+// Off by default: with no reverse proxy in front, a *client's* X-Forwarded-*
+// headers must not be honoured — trusting them let anyone on the LAN spoof
+// req.ip (walking straight past the login rate limit) or fake req.secure.
+// Behind a reverse proxy (in particular one that terminates TLS, so the
+// session cookie's Secure flag should engage), set AIENTIC_TRUST_PROXY:
+// "1" for one proxy hop, or "loopback" / a CIDR / a list of those.
+const trustProxy = process.env.AIENTIC_TRUST_PROXY;
+if (trustProxy)
+  app.set(
+    "trust proxy",
+    /^\d+$/.test(trustProxy) ? Number(trustProxy) : trustProxy
+  );
 
 app.use(express.json({ limit: "8mb" }));
 app.use(cookieParser());
 app.use(attachUser);
+
+// Defensive headers for the served frontend. script-src 'self' is safe
+// because index.html carries no inline scripts (see public/theme-init.js);
+// 'unsafe-inline' in style-src covers React's style="..." attributes and
+// the first-paint <style> block. fonts.* is the Google Fonts stylesheet
+// and its woff2 host.
+app.use((_req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Referrer-Policy", "same-origin");
+  res.setHeader(
+    "Permissions-Policy",
+    "camera=(), microphone=(), geolocation=()"
+  );
+  res.setHeader(
+    "Content-Security-Policy",
+    [
+      "default-src 'self'",
+      "script-src 'self'",
+      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+      "font-src 'self' https://fonts.gstatic.com data:",
+      "img-src 'self' data:",
+      "connect-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com",
+      "manifest-src 'self'",
+      "base-uri 'self'",
+      "form-action 'self'",
+      "frame-ancestors 'self'",
+    ].join("; ")
+  );
+  next();
+});
 
 const ok = (res, body = {}) => res.json(body);
 const bad = (res, code, error) => res.status(code).json({ error });
 
 /**
  * Login attempts, per source IP. Sliding window: old attempts age out on
- * their own, so this never needs a cleanup timer. A failed attempt counts
- * against the limit; a successful one clears it, so a legitimate user who
- * mistypes a few times isn't locked out of their next correct try.
+ * their own. A failed attempt counts against the limit; a successful one
+ * clears it, so a legitimate user who mistypes a few times isn't locked out
+ * of their next correct try.
+ *
+ * The map itself is bounded: entries are dropped the moment their window
+ * empties, and if the number of tracked IPs ever hits the cap (a scanner
+ * sweeping through source IPs) the table is swept — and if the cap still
+ * holds, restarted clean — rather than growing without limit.
  */
 const LOGIN_WINDOW_MS = 5 * 60 * 1000;
 const LOGIN_MAX_ATTEMPTS = 10;
+const LOGIN_TRACKED_IPS = 50_000;
 const loginAttempts = new Map(); // ip -> [timestamp, ...]
 
 function loginRateLimit(req, res, next) {
   const ip = req.ip;
   const now = Date.now();
-  const attempts = (loginAttempts.get(ip) || []).filter(
+  let attempts = (loginAttempts.get(ip) || []).filter(
     (t) => now - t < LOGIN_WINDOW_MS
   );
+  if (!attempts.length) loginAttempts.delete(ip);
+
   if (attempts.length >= LOGIN_MAX_ATTEMPTS) {
     const retryAfter = Math.ceil(
       (LOGIN_WINDOW_MS - (now - attempts[0])) / 1000
@@ -85,6 +132,16 @@ function loginRateLimit(req, res, next) {
     res.set("Retry-After", String(retryAfter));
     return bad(res, 429, "Too many attempts. Try again in a few minutes.");
   }
+
+  if (!loginAttempts.has(ip) && loginAttempts.size >= LOGIN_TRACKED_IPS) {
+    for (const [key, list] of loginAttempts) {
+      const fresh = list.filter((t) => now - t < LOGIN_WINDOW_MS);
+      if (fresh.length) loginAttempts.set(key, fresh);
+      else loginAttempts.delete(key);
+    }
+    if (loginAttempts.size >= LOGIN_TRACKED_IPS) loginAttempts.clear();
+  }
+
   attempts.push(now);
   loginAttempts.set(ip, attempts);
   next();
@@ -306,6 +363,8 @@ app.post("/api/admin/endpoints", requireAdmin, (req, res) => {
   const { label, note, baseUrl, modelParam, apiKey } = req.body || {};
   const base = normaliseBase(baseUrl);
   if (!base) return bad(res, 400, "Server base URL is required");
+  if (isBlockedBase(base))
+    return bad(res, 400, "That address is not allowed");
   if (!label?.trim()) return bad(res, 400, "Label is required");
   if (!modelParam?.trim()) return bad(res, 400, "Model param is required");
 
@@ -328,6 +387,8 @@ app.post("/api/admin/endpoints/preview", requireAdmin, async (req, res) => {
   const { baseUrl, apiKey } = req.body || {};
   const base = normaliseBase(baseUrl);
   if (!base) return bad(res, 400, "Server base URL is required");
+  if (isBlockedBase(base))
+    return bad(res, 400, "That address is not allowed");
   try {
     const models = await listModels(base, apiKey?.trim() || db.keys[base]);
     ok(res, { baseUrl: base, models });
@@ -342,6 +403,8 @@ app.post("/api/admin/endpoints/import", requireAdmin, async (req, res) => {
   const { baseUrl, apiKey } = req.body || {};
   const base = normaliseBase(baseUrl);
   if (!base) return bad(res, 400, "Server base URL is required");
+  if (isBlockedBase(base))
+    return bad(res, 400, "That address is not allowed");
 
   const key = apiKey?.trim() || db.keys[base];
   let models;
@@ -551,7 +614,11 @@ app.patch("/api/conversations/:id", requireAuth, (req, res) => {
   if (!convo) return bad(res, 404, "No such conversation");
   const { title, endpointId } = req.body || {};
   if (typeof title === "string" && title.trim()) convo.title = title.trim();
-  if (endpointId) convo.endpointId = endpointId;
+  if (endpointId) {
+    const endpoint = db.endpoints.find((e) => e.id === endpointId);
+    if (!endpoint) return bad(res, 400, "That model is no longer configured");
+    convo.endpointId = endpoint.id;
+  }
   convo.updatedAt = Date.now();
   save();
   ok(res, { conversation: summary(convo) });
@@ -654,6 +721,18 @@ app.post("/api/conversations/:id/stream", requireAuth, async (req, res) => {
 });
 
 /* ---------- static frontend ---------------------------------------------- */
+
+// Last-resort handler: an unexpected throw never leaks a stack trace to
+// the client, and a request that already started streaming isn't touched.
+// Errors that carry their own 4xx status (express.json's invalid-JSON and
+// friends) keep it; everything else is a plain 500.
+app.use((err, _req, res, _next) => {
+  console.error("[aientic] unhandled error:", err);
+  if (res.headersSent) return;
+  const status = Number(err.status) || 0;
+  if (status >= 400 && status < 500) return bad(res, status, err.message);
+  bad(res, 500, "Internal server error");
+});
 
 const dist = path.join(import.meta.dirname, "..", "dist");
 if (fs.existsSync(dist)) {

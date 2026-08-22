@@ -17,6 +17,12 @@ RUN cd server && npm install --omit=dev
 COPY server ./server
 COPY --from=web /app/dist ./dist
 
+# Run as the image's unprivileged user. /data is created (and owned) up
+# front so a bind-mounted or named volume inherits permissions the node
+# user can actually write to.
+RUN mkdir -p /data && chown node:node /data
+USER node
+
 ENV AIENTIC_DATA_DIR=/data
 ENV AIENTIC_PORT=8080
 VOLUME ["/data"]

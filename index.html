@@ -36,29 +36,9 @@
       href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400..600&family=Playfair+Display:ital,wght@0,400..700;1,400..700&display=swap"
     />
     <title>Aientic</title>
-    <script>
-      // Applied before first paint so the app never flashes the wrong theme.
-      // The <style> below is what actually stops the flash: the stylesheet
-      // arrives later (in dev it is injected by JS), and until it does the
-      // page paints the browser's own white.
-      try {
-        var t = localStorage.getItem("aientic:theme");
-        // No explicit choice yet: follow the OS, same as theme.js does once
-        // React is up. Once t is set this stops mattering — a stored choice
-        // always wins.
-        var dark =
-          t === "dark" ||
-          (t !== "light" &&
-            window.matchMedia &&
-            window.matchMedia("(prefers-color-scheme: dark)").matches);
-        if (dark) {
-          document.documentElement.classList.add("dark");
-          document
-            .querySelector('meta[name="theme-color"]')
-            .setAttribute("content", "#000000");
-        }
-      } catch (e) {}
-    </script>
+    <!-- Runs during parsing (before first paint) so the app never flashes
+         the wrong theme; see theme-init.js for the rest of the story. -->
+    <script src="/theme-init.js"></script>
   </head>
   <body>
     <div id="root"></div>

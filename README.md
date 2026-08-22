@@ -60,6 +60,7 @@ Compose mounts a named volume at `/data` and serves on port 8080. Set
 | `AIENTIC_API_ORIGIN` | `http://127.0.0.1:3001` | Dev proxy target for Vite |
 | `AIENTIC_SECRET` | a generated key, kept in `secret.key` | Encrypts upstream API keys at rest |
 | `AIENTIC_TLS_CERT`, `AIENTIC_TLS_KEY` | unset (plain HTTP) | PEM cert/key paths — set both to serve HTTPS directly |
+| `AIENTIC_TRUST_PROXY` | unset (no proxies trusted) | Set behind a reverse proxy so `X-Forwarded-*` is honoured: `1` for one proxy hop, or `loopback` / a CIDR / a list. Needed for the session cookie's `Secure` flag when the proxy terminates TLS. Off by default on purpose: without it, a direct client's `X-Forwarded-For` would let anyone spoof `req.ip` and walk past the login rate limit |
 
 ## How it stores things
 
@@ -84,12 +85,34 @@ This is built for a trusted network: a LAN, or a tailnet. `/api/auth/login`
 is rate-limited (10 attempts per IP per 5 minutes) and sampler values are
 bounds-checked, both on by default. HTTPS is opt-in — set `AIENTIC_TLS_CERT`
 and `AIENTIC_TLS_KEY` to PEM files and the server terminates TLS itself; the
-session cookie's `Secure` flag follows automatically (it also picks this up
-correctly if you terminate TLS at a reverse proxy in front instead, via
-`X-Forwarded-Proto`). CSRF protection is still intentionally skipped: cookies
-are `sameSite=lax` and nothing here performs a state-changing `GET`, so the
-usual CSRF vector doesn't apply. Passwords are bcrypt hashes and sessions are
-random tokens in `httpOnly` cookies, so a shared box is fine.
+session cookie's `Secure` flag follows automatically. To terminate TLS at a
+reverse proxy in front instead, set `AIENTIC_TRUST_PROXY` (see the table
+above) so the `Secure` flag and per-IP rate limiting see through it; direct
+clients' `X-Forwarded-*` headers are otherwise ignored on purpose.
+
+The served frontend ships with security headers: a strict-ish
+`Content-Security-Policy` (`script-src 'self'`, no inline scripts, with only
+`fonts.googleapis.com` / `fonts.gstatic.com` added for the Google Fonts
+stylesheet), `X-Content-Type-Options: nosniff`, `Referrer-Policy`, and
+`frame-ancestors 'self'`. Conversation text renders through react-markdown
+with a component allow-list — no raw HTML — and the links it can emit carry
+`rel="noreferrer"`.
+
+The app fetches admin-configured model servers, which is a server-side
+request forgery surface by construction: an admin can point it anywhere on
+the reachable network. Two things narrow that: upstream response bodies are
+capped at 2 MB before they are parsed, and the cloud instance-metadata
+address (`169.254.169.254` — AWS/GCP/Azure) is rejected outright, since no
+model server runs there and it is the classic SSRF payday. Pointing it at
+other internal services is a deliberate trade of the trusted-admin model.
+
+CSRF protection is still intentionally skipped: cookies are `sameSite=lax`
+and nothing here performs a state-changing `GET`, so the usual CSRF vector
+doesn't apply. Passwords are bcrypt hashes (cost 12) and sessions are random
+tokens in `httpOnly` cookies, so a shared box is fine. A login for an unknown
+username costs the same bcrypt work as one for a known one, so timing doesn't
+reveal which usernames exist. Docker images run as the unprivileged `node`
+user.
 
 For a quick self-signed cert to test HTTPS locally:
 

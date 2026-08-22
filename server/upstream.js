@@ -16,6 +16,47 @@ export function normaliseBase(raw) {
   return url;
 }
 
+/**
+ * The cloud instance-metadata service (AWS/GCP/Azure all answer there). It's
+ * the classic SSRF target — pointed at by an admin-configured endpoint, the
+ * app could be made to fetch it and hand the reply to an attacker — and no
+ * model server ever runs on that address, so it's blocked outright.
+ */
+export function isBlockedBase(base) {
+  try {
+    return new URL(base).hostname === "169.254.169.254";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Read an upstream JSON body with a hard size cap. An admin can point
+ * Aientic at any OpenAI-compatible host; a multi-gigabyte /models reply
+ * (bug or malice) must not be able to take the API down with it.
+ */
+const MAX_UPSTREAM_BODY = 2 * 1024 * 1024;
+async function readCappedJson(res) {
+  const declared = Number(res.headers.get("content-length"));
+  if (declared > MAX_UPSTREAM_BODY)
+    throw new Error(`response too large (${declared} bytes)`);
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let size = 0;
+  let text = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > MAX_UPSTREAM_BODY) {
+      await reader.cancel().catch(() => {});
+      throw new Error(`response too large`);
+    }
+    text += decoder.decode(value, { stream: true });
+  }
+  return JSON.parse(text);
+}
+
 export const chatUrl = (base) => normaliseBase(base) + "/v1/chat/completions";
 export const modelsUrl = (base) => normaliseBase(base) + "/v1/models";
 
@@ -39,7 +80,7 @@ export async function listModels(base, apiKey) {
       `${normaliseBase(base)} answered ${res.status} ${res.statusText}`
     );
   }
-  const body = await res.json();
+  const body = await readCappedJson(res);
   const rows = Array.isArray(body?.data) ? body.data : [];
   return rows
     .map((m) => (typeof m === "string" ? m : m?.id))
@@ -123,7 +164,7 @@ export async function fetchRunningModels(base, apiKey) {
     );
   }
 
-  const body = await res.json();
+  const body = await readCappedJson(res);
   const rows = Array.isArray(body?.running)
     ? body.running
     : Array.isArray(body)
@@ -165,7 +206,7 @@ export async function fetchServerDefaults(base, apiKey, model = null) {
     );
   }
 
-  const body = await res.json();
+  const body = await readCappedJson(res);
   const settings = body?.default_generation_settings ?? {};
   const sources = [settings.params, settings, body?.params, body];
 

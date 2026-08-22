@@ -16,8 +16,9 @@ const SESSION_TTL = 1000 * 60 * 60 * 24 * 30; // 30 days
 // HTTP on a LAN, where a cookie marked secure would just never be sent at
 // all. req.secure is true precisely when the connection actually is
 // encrypted — Node's own TLS when AIENTIC_TLS_CERT/KEY are set, or a
-// reverse proxy's TLS termination via trust proxy (see index.js) — so this
-// upgrades itself automatically the moment either is in place.
+// reverse proxy's TLS termination, once AIENTIC_TRUST_PROXY is set (see
+// index.js) — so this upgrades itself automatically the moment either is
+// in place.
 const cookieOptions = (req) => ({
   httpOnly: true,
   secure: req.secure,
@@ -100,7 +101,28 @@ export function requireAdmin(req, res, next) {
 }
 
 export const verifyPassword = (user, plain) =>
-  !!user && bcrypt.compareSync(String(plain), user.passwordHash);
+  // Compare against a throwaway hash when the user doesn't exist, so an
+  // unknown username takes the same time as a known one — response latency
+  // shouldn't reveal which usernames exist.
+  bcrypt.compareSync(String(plain), user ? user.passwordHash : DUMMY_HASH);
+
+const DUMMY_HASH = bcrypt.hashSync(crypto.randomBytes(24).toString("hex"), 12);
+
+/** Drops sessions past their TTL so data.json doesn't hoard them forever
+ *  (an expired token is only collected when that session is next used,
+ *  which never happens on its own). */
+export function pruneExpiredSessions() {
+  const now = Date.now();
+  let changed = false;
+  for (const [token, session] of Object.entries(db.sessions)) {
+    if (now - session.createdAt > SESSION_TTL) {
+      delete db.sessions[token];
+      changed = true;
+    }
+  }
+  if (changed) save();
+}
+pruneExpiredSessions();
 
 /** True until the first account exists — drives the setup screen. */
 export const needsBootstrap = () => db.users.length === 0;
