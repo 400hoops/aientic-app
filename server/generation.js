@@ -64,13 +64,28 @@ export function createReasoningSplitter() {
 }
 
 /**
- * How long to wait for the upstream to start responding (response headers)
- * before the run gets a clear error instead of sitting in "generating" until
- * someone notices and hits Stop. A server that answers and then streams
- * slowly for an hour is fine — this only bounds the silence before the first
- * byte, which a hung socket or a black-holed connection produces.
+ * How long to wait for the upstream to answer at all (response headers) before
+ * the run gets a clear error instead of sitting in "generating" until someone
+ * notices and hits Stop. A server that answers and then streams slowly for an
+ * hour is fine — this only bounds the silence before the first byte, which is
+ * where a hung socket or a black-holed connection shows up.
+ *
+ * Model *loading* and long-context prefill both happen before those headers
+ * arrive, so the default is generous; AIENTIC_FIRST_RESPONSE_TIMEOUT_MS
+ * overrides it (0 disables the watchdog entirely).
  */
-const CONNECT_TIMEOUT_MS = 30_000;
+function firstResponseTimeoutMs() {
+  const raw = process.env.AIENTIC_FIRST_RESPONSE_TIMEOUT_MS;
+  if (raw === undefined || raw === "") return 120_000;
+  const n = Number(raw);
+  if (Number.isFinite(n) && n >= 0) return n;
+  console.warn(
+    `[aientic] AIENTIC_FIRST_RESPONSE_TIMEOUT_MS is not a number (got "${raw}"); using the 120 s default`
+  );
+  return 120_000;
+}
+
+const FIRST_RESPONSE_TIMEOUT_MS = firstResponseTimeoutMs();
 
 /** Conversation id -> in-flight generation. */
 const active = new Map();
@@ -175,13 +190,17 @@ export async function streamCompletion({
   const split = createReasoningSplitter();
   let persistAt = Date.now();
 
-  // Abort if no response headers arrive in time. Cleared the moment they do,
-  // so it can't kill a slow-but-healthy stream.
+  // Abort if no response headers arrive in time. Never armed when disabled
+  // (0); otherwise cleared the moment the upstream answers, so it can't kill
+  // a slow-but-healthy stream.
   let timedOut = false;
-  const connectTimer = setTimeout(() => {
-    timedOut = true;
-    gen.controller.abort();
-  }, CONNECT_TIMEOUT_MS);
+  let connectTimer = null;
+  if (FIRST_RESPONSE_TIMEOUT_MS > 0) {
+    connectTimer = setTimeout(() => {
+      timedOut = true;
+      gen.controller.abort();
+    }, FIRST_RESPONSE_TIMEOUT_MS);
+  }
 
   try {
     const upstream = await upstreamFetch(chatUrl(endpoint.baseUrl), {
@@ -272,7 +291,7 @@ export async function streamCompletion({
         save();
       }
       sse(gen, "error", {
-        message: `${endpoint.label} took too long to start responding.`,
+        message: `${endpoint.label} took too long to start responding (no reply within ${Math.round(FIRST_RESPONSE_TIMEOUT_MS / 1000)} s).`,
       });
     } else if (gen.controller.signal.aborted) {
       // Explicit stop — whatever streamed is already saved.
@@ -288,7 +307,7 @@ export async function streamCompletion({
       sse(gen, "error", { message });
     }
   } finally {
-    clearTimeout(connectTimer);
+    if (connectTimer) clearTimeout(connectTimer);
     active.delete(conversation.id);
     for (const subscriber of gen.subscribers) subscriber.end();
     gen.subscribers.clear();

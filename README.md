@@ -152,6 +152,7 @@ on each device — see "A trusted cert without a public domain" below), add
 | `AIENTIC_TLS_CERT`, `AIENTIC_TLS_KEY` | unset (plain HTTP) | PEM cert/key paths — set both to serve HTTPS directly |
 | `AIENTIC_SECURE_COOKIES` | `off` | `Secure` attribute on the session cookie: `off` (works with self-signed / bare-IP setups), `auto` (set when the connection is TLS — correct once every client trusts the cert), `on` (always) |
 | `AIENTIC_TRUST_PROXY` | unset (no proxies trusted) | Set behind a reverse proxy so `X-Forwarded-*` is honoured: `1` for one proxy hop, or `loopback` / a CIDR / a list. Off by default on purpose: without it, a direct client's `X-Forwarded-For` would let anyone spoof `req.ip` and walk past the login rate limit |
+| `AIENTIC_FIRST_RESPONSE_TIMEOUT_MS` | `120000` | How long to wait for a model server to start responding before a run is failed with an error. Model loading and long-context prefill both happen before the first byte, so the default is generous; raise it for very large models loading on demand, or set `0` to disable the watchdog entirely |
 
 ## How it stores things
 
