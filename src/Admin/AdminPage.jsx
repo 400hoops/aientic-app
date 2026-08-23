@@ -1,7 +1,49 @@
 import { useEffect, useState } from "react";
 import * as api from "../api.js";
 import AdminShell from "./AdminShell.jsx";
-import Select from "../Select.jsx";
+
+const ROLES = [
+  { value: "user", label: "User" },
+  { value: "admin", label: "Admin" },
+];
+
+/**
+ * The user/admin choice, inline. Two segments instead of a dropdown: a
+ * popover in the table grew down over the next row's controls and hid them,
+ * and a two-value choice doesn't need to open anything at all.
+ */
+function RoleToggle({ value, onChange, disabled = false, stretch = false, groupLabel }) {
+  return (
+    <div
+      role="group"
+      aria-label={groupLabel}
+      className={`inline-flex items-center rounded-lg border border-[var(--border-strong)]
+                 bg-[var(--raised)] p-0.5 ${stretch ? "w-full" : ""}`}
+    >
+      {ROLES.map((r) => {
+        const active = r.value === value;
+        return (
+          <button
+            key={r.value}
+            type="button"
+            aria-pressed={active}
+            disabled={disabled}
+            onClick={() => onChange(r.value)}
+            className={`rounded-md px-3 py-1 text-[13px] transition-colors
+                        focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus)]
+                        disabled:cursor-not-allowed disabled:opacity-50
+                        ${stretch ? "flex-1" : ""}
+                        ${active
+                          ? "bg-[var(--panel-2)] text-[var(--text)]"
+                          : "text-[var(--muted)] hover:bg-[var(--hover)] hover:text-[var(--text)]"}`}
+          >
+            {r.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 /* ---------- shared bits -------------------------------------------------- */
 
@@ -441,14 +483,10 @@ function Users({ currentUser }) {
           </div>
           <div>
             <span className={label}>Role</span>
-            <Select
+            <RoleToggle
+              stretch
               value={draft.role}
               onChange={(role) => setDraft({ ...draft, role })}
-              width={220}
-              options={[
-                { value: "user", label: "User" },
-                { value: "admin", label: "Admin" },
-              ]}
             />
           </div>
         </div>
@@ -488,17 +526,11 @@ function Users({ currentUser }) {
                   )}
                 </td>
                 <td className="px-4 py-3">
-                  <div className="w-[128px]">
-                    <Select
-                      value={u.role}
-                      onChange={(role) => changeRole(u, role)}
-                      width={128}
-                      options={[
-                        { value: "user", label: "User" },
-                        { value: "admin", label: "Admin" },
-                      ]}
-                    />
-                  </div>
+                  <RoleToggle
+                    value={u.role}
+                    onChange={(role) => changeRole(u, role)}
+                    groupLabel={`Role for ${u.username}`}
+                  />
                 </td>
                 <td className="px-4 py-3 text-right">
                   {changingId === u.id ? (
