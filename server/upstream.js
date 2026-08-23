@@ -5,6 +5,7 @@
  * Base URLs are stored as the server root; the path is appended here so the
  * admin never has to remember whether to include /v1.
  */
+import dns from "node:dns";
 
 /** Trailing slashes and a pasted /v1 or /v1/chat/completions all normalise. */
 export function normaliseBase(raw) {
@@ -22,11 +23,73 @@ export function normaliseBase(raw) {
  * app could be made to fetch it and hand the reply to an attacker — and no
  * model server ever runs on that address, so it's blocked outright.
  */
+export const METADATA_IP = "169.254.169.254";
+
+/** Fast string check on the URL itself — used where input is first entered. */
 export function isBlockedBase(base) {
   try {
-    return new URL(base).hostname === "169.254.169.254";
+    return new URL(base).hostname === METADATA_IP;
   } catch {
     return false;
+  }
+}
+
+/**
+ * A fetch() with the blocklist applied where it actually matters: at the
+ * wire. The string check above is gameable in two ways — a server can answer
+ * a request with a redirect to anywhere, and a hostname can simply *resolve*
+ * to the blocked address (169.254.169.254.nip.io, a rebinding domain, …). So
+ * every outbound request goes through here: redirects are followed by hand,
+ * and each hop is re-checked, with non-IP hostnames resolved first, so a
+ * name that points at the metadata service is caught before it's reached.
+ */
+const BLOCK_CHECK_TTL = 60_000;
+const BLOCK_CHECK_MAX = 1000;
+const blockCheckCache = new Map(); // host -> { at, blocked }
+
+async function hostIsBlocked(host) {
+  if (host === METADATA_IP) return true;
+  const hit = blockCheckCache.get(host);
+  if (hit && Date.now() - hit.at < BLOCK_CHECK_TTL) return hit.blocked;
+
+  let blocked = false;
+  // dns.lookup on a numeric address is a no-op parse, so IP literals are
+  // free; everything else is one resolver round trip, cached per minute.
+  try {
+    const addrs = await dns.promises.lookup(host, { all: true });
+    blocked = addrs.some((a) => a.address === METADATA_IP);
+  } catch {
+    blocked = false; // unresolvable — the fetch itself will fail
+  }
+  if (blockCheckCache.size >= BLOCK_CHECK_MAX) blockCheckCache.clear();
+  blockCheckCache.set(host, { at: Date.now(), blocked });
+  return blocked;
+}
+
+const MAX_REDIRECTS = 5;
+export async function upstreamFetch(rawUrl, opts = {}) {
+  let url = String(rawUrl);
+  let reqOpts = opts;
+  for (let hop = 0; ; hop++) {
+    if (hop > MAX_REDIRECTS) throw new Error("too many redirects");
+    const u = new URL(url);
+    if (await hostIsBlocked(u.hostname))
+      throw new Error(`${u.hostname} is not allowed`);
+
+    const res = await fetch(url, { ...reqOpts, redirect: "manual" });
+    const location = res.status >= 300 && res.status < 400
+      ? res.headers.get("location")
+      : null;
+    if (!location) return res;
+
+    // Mirror fetch's own redirect semantics: 301/302/303 become GETs
+    // without a body; 307/308 keep method and body.
+    if (res.status === 301 || res.status === 302 || res.status === 303) {
+      if (reqOpts.method === "POST")
+        reqOpts = { ...reqOpts, method: "GET", body: undefined };
+    }
+    res.body?.cancel?.().catch?.(() => {});
+    url = new URL(location, url).toString();
   }
 }
 
@@ -71,7 +134,7 @@ export function authHeaders(apiKey) {
  * here, which is exactly what "add all models from this server" needs.
  */
 export async function listModels(base, apiKey) {
-  const res = await fetch(modelsUrl(base), {
+  const res = await upstreamFetch(modelsUrl(base), {
     headers: authHeaders(apiKey),
     signal: AbortSignal.timeout(15000),
   });
@@ -153,7 +216,7 @@ export const runningUrl = (base) => normaliseBase(base) + "/running";
  * is loaded — the caller needs to tell those apart.
  */
 export async function fetchRunningModels(base, apiKey) {
-  const res = await fetch(runningUrl(base), {
+  const res = await upstreamFetch(runningUrl(base), {
     headers: authHeaders(apiKey),
     signal: AbortSignal.timeout(5000),
   });
@@ -194,7 +257,7 @@ export async function fetchRunningModels(base, apiKey) {
  */
 export async function fetchServerDefaults(base, apiKey, model = null) {
   const url = model ? upstreamPropsUrl(base, model) : propsUrl(base);
-  const res = await fetch(url, {
+  const res = await upstreamFetch(url, {
     headers: authHeaders(apiKey),
     signal: AbortSignal.timeout(8000),
   });

@@ -176,8 +176,8 @@ note.
 ## Security posture
 
 This is built for a trusted network: a LAN, or a tailnet. `/api/auth/login`
-is rate-limited (10 attempts per IP per 5 minutes) and sampler values are
-bounds-checked, both on by default. HTTPS is opt-in — set `AIENTIC_TLS_CERT`
+and the first-run `/api/auth/setup` are rate-limited (10 attempts per IP
+per 5 minutes) and sampler values are bounds-checked, both on by default. HTTPS is opt-in — set `AIENTIC_TLS_CERT`
 and `AIENTIC_TLS_KEY` to PEM files and the server terminates TLS itself. The
 session cookie has no `Secure` flag by default: deployments are commonly
 reached by bare IP over plain HTTP, or over HTTPS with a self-signed /
@@ -201,11 +201,15 @@ with a component allow-list — no raw HTML — and the links it can emit carry
 
 The app fetches admin-configured model servers, which is a server-side
 request forgery surface by construction: an admin can point it anywhere on
-the reachable network. Two things narrow that: upstream response bodies are
-capped at 2 MB before they are parsed, and the cloud instance-metadata
-address (`169.254.169.254` — AWS/GCP/Azure) is rejected outright, since no
-model server runs there and it is the classic SSRF payday. Pointing it at
-other internal services is a deliberate trade of the trusted-admin model.
+the reachable network. Two things narrow that. Upstream response bodies are
+capped at 2 MB before they are parsed. And the cloud instance-metadata
+address (`169.254.169.254` — AWS/GCP/Azure) is rejected, since no model
+server runs there and it is the classic SSRF payday — checked not just on
+the stored base URL but on every outbound request, hop by hop: redirects are
+followed by hand and each one is re-tested, and hostnames are resolved
+first, so a server answering with a redirect (or a name that simply points
+at the metadata IP) can't smuggle it back. Pointing it at other internal
+services is a deliberate trade of the trusted-admin model.
 
 CSRF protection is still intentionally skipped: cookies are `sameSite=lax`
 and nothing here performs a state-changing `GET`, so the usual CSRF vector

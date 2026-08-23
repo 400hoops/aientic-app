@@ -148,6 +148,34 @@ function loginRateLimit(req, res, next) {
 
 const clearLoginAttempts = (req) => loginAttempts.delete(req.ip);
 
+/* ---------- input bounds ------------------------------------------------- */
+
+/**
+ * express.json already caps the whole body at 8 MB; these stop a valid, small
+ * request from still storing an unreasonable string in the database.
+ */
+const MAX_LEN = {
+  username: 64,
+  label: 200,
+  note: 200,
+  modelParam: 200,
+  baseUrl: 500,
+  title: 200,
+  content: 100_000,
+  systemPrompt: 20_000,
+};
+
+const tooLong = (value, max) =>
+  typeof value === "string" && value.length > max;
+
+/** normaliseBase + the blocklist + a length cap, as one check. */
+const baseProblem = (base) => {
+  if (!base) return "Server base URL is required";
+  if (base.length > MAX_LEN.baseUrl) return "Server base URL is too long";
+  if (isBlockedBase(base)) return "That address is not allowed";
+  return null;
+};
+
 /* ---------- sampler defaults -------------------------------------------- */
 
 /**
@@ -166,8 +194,16 @@ const FALLBACK_DEFAULTS = {
 
 const DEFAULTS_TTL = 60_000;
 const RUNNING_TTL = 4_000; // status is meant to look live
+const CACHE_MAX = 500; // bounded: entries are keyed by admin-entered base URLs
 const defaultsCache = new Map(); // "base::model" -> { at, defaults, source }
 const runningCache = new Map(); // base URL -> { at, models, reachable }
+
+/** Map.set with a cap on the oldest entry, so the caches can't grow without
+ *  limit as endpoints come and go. */
+const cachedSet = (cache, key, value) => {
+  if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value);
+  cache.set(key, value);
+};
 
 /**
  * Which models a server currently holds in memory, cached briefly so a UI
@@ -191,7 +227,7 @@ async function runningFor(base) {
   } catch (err) {
     entry = { at: Date.now(), models: null, reachable: false, error: err.message };
   }
-  runningCache.set(base, entry);
+  cachedSet(runningCache, base, entry);
   return entry;
 }
 
@@ -243,7 +279,7 @@ async function defaultsFor(endpoint) {
   } catch (err) {
     console.warn(`[sampler] no defaults for ${model} on ${base}: ${err.message}`);
   }
-  defaultsCache.set(key, entry);
+  cachedSet(defaultsCache, key, entry);
   return entry;
 }
 
@@ -282,21 +318,28 @@ app.get("/api/session", (req, res) =>
   ok(res, { user: publicUser(req.user), needsSetup: needsBootstrap() })
 );
 
-// Only available while no account exists — the first-run admin.
-app.post("/api/auth/setup", (req, res) => {
+// Only available while no account exists — the first-run admin. Rate-limited
+// like login: an attempt here costs the server a cost-12 bcrypt, so an
+// unthrottled hammerer would pin a CPU core.
+app.post("/api/auth/setup", loginRateLimit, (req, res) => {
   if (!needsBootstrap()) return bad(res, 409, "Already set up");
   const { username, password } = req.body || {};
   if (!username?.trim()) return bad(res, 400, "Username is required");
+  if (tooLong(username, MAX_LEN.username))
+    return bad(res, 400, `Username must be at most ${MAX_LEN.username} characters`);
   if (!password || password.length < 8)
     return bad(res, 400, "Passwords must be at least 8 characters");
 
   const user = createUser({ username, password, role: "admin" });
+  clearLoginAttempts(req);
   startSession(req, res, user);
   ok(res, { user: publicUser(user) });
 });
 
 app.post("/api/auth/login", loginRateLimit, (req, res) => {
   const { username, password } = req.body || {};
+  if (tooLong(username, MAX_LEN.username))
+    return bad(res, 400, "Invalid username or password");
   const user = findUser(username);
   if (!verifyPassword(user, password))
     return bad(res, 401, "Invalid username or password");
@@ -361,11 +404,20 @@ app.get("/api/admin/endpoints", requireAdmin, (_req, res) =>
 app.post("/api/admin/endpoints", requireAdmin, (req, res) => {
   const { label, note, baseUrl, modelParam, apiKey } = req.body || {};
   const base = normaliseBase(baseUrl);
-  if (!base) return bad(res, 400, "Server base URL is required");
-  if (isBlockedBase(base))
-    return bad(res, 400, "That address is not allowed");
+  const problem = baseProblem(base);
+  if (problem) return bad(res, 400, problem);
   if (!label?.trim()) return bad(res, 400, "Label is required");
-  if (!modelParam?.trim()) return bad(res, 400, "Model param is required");
+  if (
+    tooLong(label, MAX_LEN.label) ||
+    tooLong(note, MAX_LEN.note) ||
+    tooLong(modelParam, MAX_LEN.modelParam)
+  )
+    return bad(
+      res,
+      400,
+      `Label, note and model param must be at most ${MAX_LEN.label} characters`
+    );
+  if (!modelParam.trim()) return bad(res, 400, "Model param is required");
 
   const endpoint = {
     id: uid(),
@@ -385,9 +437,8 @@ app.post("/api/admin/endpoints", requireAdmin, (req, res) => {
 app.post("/api/admin/endpoints/preview", requireAdmin, async (req, res) => {
   const { baseUrl, apiKey } = req.body || {};
   const base = normaliseBase(baseUrl);
-  if (!base) return bad(res, 400, "Server base URL is required");
-  if (isBlockedBase(base))
-    return bad(res, 400, "That address is not allowed");
+  const problem = baseProblem(base);
+  if (problem) return bad(res, 400, problem);
   try {
     const models = await listModels(base, apiKey?.trim() || db.keys[base]);
     ok(res, { baseUrl: base, models });
@@ -401,9 +452,8 @@ app.post("/api/admin/endpoints/preview", requireAdmin, async (req, res) => {
 app.post("/api/admin/endpoints/import", requireAdmin, async (req, res) => {
   const { baseUrl, apiKey } = req.body || {};
   const base = normaliseBase(baseUrl);
-  if (!base) return bad(res, 400, "Server base URL is required");
-  if (isBlockedBase(base))
-    return bad(res, 400, "That address is not allowed");
+  const problem = baseProblem(base);
+  if (problem) return bad(res, 400, problem);
 
   const key = apiKey?.trim() || db.keys[base];
   let models;
@@ -496,8 +546,16 @@ app.put("/api/admin/sampler/:endpointId", requireAdmin, async (req, res) => {
       return bad(res, 400, `${key} must be a number between ${min} and ${max}`);
     next[key] = value;
   }
-  if ("systemPrompt" in incoming)
-    next.systemPrompt = String(incoming.systemPrompt || "");
+  if ("systemPrompt" in incoming) {
+    const prompt = String(incoming.systemPrompt || "");
+    if (prompt.length > MAX_LEN.systemPrompt)
+      return bad(
+        res,
+        400,
+        `System prompt must be at most ${MAX_LEN.systemPrompt} characters`
+      );
+    next.systemPrompt = prompt;
+  }
 
   db.samplers[endpoint.id] = next;
   save();
@@ -513,6 +571,8 @@ app.get("/api/admin/users", requireAdmin, (_req, res) =>
 app.post("/api/admin/users", requireAdmin, (req, res) => {
   const { username, password, role } = req.body || {};
   if (!username?.trim()) return bad(res, 400, "Username is required");
+  if (tooLong(username, MAX_LEN.username))
+    return bad(res, 400, `Username must be at most ${MAX_LEN.username} characters`);
   if (findUser(username)) return bad(res, 409, "That username is taken");
   if (!password || password.length < 8)
     return bad(res, 400, "Passwords must be at least 8 characters");
@@ -597,7 +657,9 @@ app.post("/api/conversations", requireAuth, (req, res) => {
   const convo = {
     id: uid(),
     userId: req.user.id,
-    title: title?.trim() || "New chat",
+    title: (typeof title === "string" && title.trim())
+      ? title.trim().slice(0, MAX_LEN.title)
+      : "New chat",
     endpointId: endpointId || db.endpoints[0]?.id || null,
     createdAt: Date.now(),
     updatedAt: Date.now(),
@@ -612,7 +674,8 @@ app.patch("/api/conversations/:id", requireAuth, (req, res) => {
   const convo = owned(req);
   if (!convo) return bad(res, 404, "No such conversation");
   const { title, endpointId } = req.body || {};
-  if (typeof title === "string" && title.trim()) convo.title = title.trim();
+  if (typeof title === "string" && title.trim())
+    convo.title = title.trim().slice(0, MAX_LEN.title);
   if (endpointId) {
     const endpoint = db.endpoints.find((e) => e.id === endpointId);
     if (!endpoint) return bad(res, 400, "That model is no longer configured");
@@ -638,7 +701,15 @@ app.patch("/api/conversations/:id/messages/:messageId", requireAuth, (req, res) 
   if (!message) return bad(res, 404, "No such message");
 
   const { content, truncate } = req.body || {};
-  if (typeof content === "string") message.content = content;
+  if (typeof content === "string") {
+    if (content.length > MAX_LEN.content)
+      return bad(
+        res,
+        400,
+        `Messages must be at most ${MAX_LEN.content} characters`
+      );
+    message.content = content;
+  }
   // Editing a user message drops everything after it, ready for a re-run.
   if (truncate) {
     const at = convo.messages.indexOf(message);
@@ -697,6 +768,12 @@ app.post("/api/conversations/:id/stream", requireAuth, async (req, res) => {
       convo.messages.pop();
   } else {
     if (!content?.trim()) return bad(res, 400, "Message is empty");
+    if (content.length > MAX_LEN.content)
+      return bad(
+        res,
+        400,
+        `Messages must be at most ${MAX_LEN.content} characters`
+      );
     convo.messages.push({
       id: uid(),
       role: "user",

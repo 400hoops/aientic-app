@@ -16,6 +16,7 @@ import {
   authHeaders,
   samplerPayload,
   describeUpstreamError,
+  upstreamFetch,
 } from "./upstream.js";
 
 /**
@@ -61,6 +62,15 @@ export function createReasoningSplitter() {
     return out;
   };
 }
+
+/**
+ * How long to wait for the upstream to start responding (response headers)
+ * before the run gets a clear error instead of sitting in "generating" until
+ * someone notices and hits Stop. A server that answers and then streams
+ * slowly for an hour is fine — this only bounds the silence before the first
+ * byte, which a hung socket or a black-holed connection produces.
+ */
+const CONNECT_TIMEOUT_MS = 30_000;
 
 /** Conversation id -> in-flight generation. */
 const active = new Map();
@@ -165,8 +175,16 @@ export async function streamCompletion({
   const split = createReasoningSplitter();
   let persistAt = Date.now();
 
+  // Abort if no response headers arrive in time. Cleared the moment they do,
+  // so it can't kill a slow-but-healthy stream.
+  let timedOut = false;
+  const connectTimer = setTimeout(() => {
+    timedOut = true;
+    gen.controller.abort();
+  }, CONNECT_TIMEOUT_MS);
+
   try {
-    const upstream = await fetch(chatUrl(endpoint.baseUrl), {
+    const upstream = await upstreamFetch(chatUrl(endpoint.baseUrl), {
       method: "POST",
       headers: authHeaders(apiKey),
       signal: gen.controller.signal,
@@ -245,7 +263,18 @@ export async function streamCompletion({
     conversation.updatedAt = Date.now();
     save();
 
-    if (gen.controller.signal.aborted) {
+    if (timedOut) {
+      // The connect watchdog fired, not a user Stop.
+      if (!assistant.content && !assistant.reasoning) {
+        conversation.messages = conversation.messages.filter(
+          (m) => m.id !== assistant.id
+        );
+        save();
+      }
+      sse(gen, "error", {
+        message: `${endpoint.label} took too long to start responding.`,
+      });
+    } else if (gen.controller.signal.aborted) {
       // Explicit stop — whatever streamed is already saved.
       sse(gen, "done", { message: assistant, stopped: true });
     } else {
@@ -259,6 +288,7 @@ export async function streamCompletion({
       sse(gen, "error", { message });
     }
   } finally {
+    clearTimeout(connectTimer);
     active.delete(conversation.id);
     for (const subscriber of gen.subscribers) subscriber.end();
     gen.subscribers.clear();
