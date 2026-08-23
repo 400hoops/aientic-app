@@ -37,7 +37,7 @@ export default function LoginPage({ needsSetup, onSignedIn }) {
     // the edges once it does scroll; the centring still applies whenever it
     // fits.
     <div className="flex h-full items-center justify-center overflow-y-auto bg-[var(--bg)] px-6 py-8">
-      <form onSubmit={submit} className="w-full max-w-[380px] -translate-y-8">
+      <form onSubmit={submit} className="w-full max-w-[380px]">
         <div className="mb-9 text-center">
           <Wordmark size={34} />
           <p className="mt-2 text-[14px] text-[var(--faint)]">
@@ -92,7 +92,9 @@ export default function LoginPage({ needsSetup, onSignedIn }) {
           className="w-full rounded-lg bg-[var(--text)] py-3 text-[14.5px] font-medium text-[var(--bg)]
                      transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {busy ? "…" : needsSetup ? "Create account" : "Sign in"}
+          {busy
+            ? needsSetup ? "Creating…" : "Signing in…"
+            : needsSetup ? "Create account" : "Sign in"}
         </button>
       </form>
     </div>

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { IconCheck, IconChevronDown, IconSearch } from "./Icons.jsx";
 import { isPhone } from "./isPhone.js";
 
@@ -52,6 +52,7 @@ export default function Select({
   const [query, setQuery] = useState("");
   const rootRef = useRef(null);
   const searchRef = useRef(null);
+  const popRef = useRef(null);
 
   const selected = options.find((o) => o.value === value) || null;
 
@@ -79,6 +80,52 @@ export default function Select({
     if (open && searchable && !isPhone()) searchRef.current?.focus();
     if (!open) setQuery("");
   }, [open, searchable]);
+
+  // Keep the popover inside the window. The class-based position (a fixed
+  // width anchored at the trigger's edge) can run off the right of a phone
+  // screen, and an "open upward" popover can run off the top. This measures
+  // it once open and, only when it would be cut off and the other side has
+  // room for the whole thing, nudges or flips it. Runs in a layout effect so
+  // the shift happens in the same frame the popover paints.
+  useLayoutEffect(() => {
+    if (!open || matchParent) return;
+    const pop = popRef.current;
+    const root = rootRef.current;
+    if (!pop || !root) return;
+
+    const margin = 8;
+    const popRect = pop.getBoundingClientRect();
+    const rootRect = root.getBoundingClientRect();
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+
+    // Horizontal: clamp so a trigger near an edge can't push it off-screen.
+    let dx = 0;
+    if (popRect.left < margin) dx = margin - popRect.left;
+    else if (popRect.right > vw - margin) dx = vw - margin - popRect.right;
+    if (dx) pop.style.transform = `translateX(${dx}px)`;
+
+    // Vertical: flip to the other side of the trigger if it overflows and
+    // that side has room for the full popover (otherwise leave it — a
+    // half-flip on a very short screen is worse than a clipped edge).
+    if (placement === "bottom") {
+      if (
+        popRect.bottom > vh - margin &&
+        popRect.height + margin * 2 <= rootRect.top
+      ) {
+        // Over the trigger: 8px (the class's mt-2, now on the other side)
+        // clear of its top edge.
+        pop.style.top = "auto";
+        pop.style.bottom = `calc(100% + ${margin}px)`;
+      }
+    } else if (
+      popRect.top < margin &&
+      popRect.height + margin * 2 <= vh - rootRect.bottom
+    ) {
+      pop.style.bottom = "auto";
+      pop.style.top = `calc(100% + ${margin}px)`;
+    }
+  }, [open, placement, matchParent]);
 
   const visible = query.trim()
     ? options.filter((o) =>
@@ -118,6 +165,7 @@ export default function Select({
 
       {open && (
         <div
+          ref={popRef}
           // matchParent: left-0 right-0 spans the positioned ancestor
           // exactly, so no explicit width is needed — it's already the
           // same length as the bar. Otherwise, a fixed pixel width can push

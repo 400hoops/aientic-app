@@ -4,6 +4,7 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import { IconCheck, IconCopy } from "./Icons.jsx";
+import { copyText } from "./clipboard.js";
 
 /**
  * Assistant output: GitHub-flavoured markdown plus LaTeX.
@@ -16,11 +17,10 @@ function CodeBlock({ language, code }) {
   const [copied, setCopied] = useState(false);
 
   const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(code);
+    if (await copyText(code)) {
       setCopied(true);
       setTimeout(() => setCopied(false), 1400);
-    } catch {}
+    }
   };
 
   return (

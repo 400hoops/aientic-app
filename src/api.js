@@ -96,8 +96,10 @@ export const addUser = (username, password, role) =>
   });
 export const removeUser = (id) =>
   request(`/admin/users/${id}`, { method: "DELETE" });
-export const setUserPassword = (id, password) =>
-  request(`/admin/users/${id}`, { method: "PATCH", body: { password } });
+// General role/password update — the server applies only the keys present.
+export const updateUser = (id, patch) =>
+  request(`/admin/users/${id}`, { method: "PATCH", body: patch });
+export const setUserPassword = (id, password) => updateUser(id, { password });
 
 /* ---------- streaming ---------------------------------------------------- */
 

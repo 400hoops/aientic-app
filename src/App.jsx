@@ -295,6 +295,13 @@ export default function App() {
     );
   }
 
+  // Sampler and Admin don't exist for non-admins — a typed URL, a stale
+  // bookmark, or a live demotion shouldn't leave them on a blank pane.
+  const effectiveView =
+    (view === "sampler" || view === "admin") && user.role !== "admin"
+      ? "chat"
+      : view;
+
   const visible = filter.trim()
     ? conversations.filter((c) =>
         c.title.toLowerCase().includes(filter.trim().toLowerCase())
@@ -304,7 +311,7 @@ export default function App() {
   const sidebar = (
     <Sidebar
       user={user}
-      view={view}
+      view={effectiveView}
       conversations={visible}
       activeId={activeId}
       filter={filter}
@@ -361,7 +368,7 @@ export default function App() {
         </div>
       </div>
 
-      {view === "chat" && (
+      {effectiveView === "chat" && (
         <AienticChatShell
           models={models}
           modelsLoaded={modelsLoaded}
@@ -397,7 +404,7 @@ export default function App() {
         />
       )}
 
-      {view === "sampler" && user.role === "admin" && (
+      {effectiveView === "sampler" && user.role === "admin" && (
         <SamplerPage
           models={models}
           modelStatus={modelStatus}
@@ -409,7 +416,7 @@ export default function App() {
         />
       )}
 
-      {view === "admin" && user.role === "admin" && (
+      {effectiveView === "admin" && user.role === "admin" && (
         <AdminPage
           user={user}
           sidebarOpen={sidebarOpen}

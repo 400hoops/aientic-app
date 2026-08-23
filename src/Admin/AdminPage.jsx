@@ -102,6 +102,7 @@ function Endpoints({ onChanged }) {
 
   const remove = (endpoint) =>
     guard(async () => {
+      if (!window.confirm(`Delete the "${endpoint.label}" endpoint?`)) return;
       const res = await api.removeEndpoint(endpoint.id);
       setEndpoints(res.endpoints);
       onChanged?.();
@@ -121,7 +122,11 @@ function Endpoints({ onChanged }) {
             <span className={label}>Server base URL</span>
             <input
               value={baseUrl}
-              onChange={(e) => setBaseUrl(e.target.value)}
+              onChange={(e) => {
+                setBaseUrl(e.target.value);
+                // A stale list under a changed URL is worse than no list.
+                setPreview(null);
+              }}
               placeholder="http://192.168.1.10:8081"
               className={field}
             />
@@ -253,7 +258,7 @@ function Endpoints({ onChanged }) {
         </div>
       </div>
 
-      <div className="mt-6 overflow-hidden rounded-xl border border-[var(--border)]">
+      <div className="mt-6 overflow-x-auto rounded-xl border border-[var(--border)]">
         <table className="w-full border-collapse text-[13.5px]">
           <thead>
             <tr className="bg-[var(--panel)] text-[11.5px] uppercase tracking-wide text-[var(--faint)]">
@@ -348,9 +353,27 @@ function Users({ currentUser }) {
   };
 
   const remove = async (user) => {
+    if (
+      !window.confirm(
+        `Delete ${user.username}? Their conversations are deleted with the account.`,
+      )
+    )
+      return;
     setError(null);
     try {
       const res = await api.removeUser(user.id);
+      setUsers(res.users);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const changeRole = async (user, role) => {
+    if (role === user.role) return;
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await api.updateUser(user.id, { role });
       setUsers(res.users);
     } catch (err) {
       setError(err.message);
@@ -444,7 +467,7 @@ function Users({ currentUser }) {
         </button>
       </div>
 
-      <div className="mt-6 overflow-hidden rounded-xl border border-[var(--border)]">
+      <div className="mt-6 overflow-x-auto rounded-xl border border-[var(--border)]">
         <table className="w-full border-collapse text-[13.5px]">
           <thead>
             <tr className="bg-[var(--panel)] text-[11.5px] uppercase tracking-wide text-[var(--faint)]">
@@ -465,9 +488,17 @@ function Users({ currentUser }) {
                   )}
                 </td>
                 <td className="px-4 py-3">
-                  <span className="rounded-full bg-[var(--panel-2)] px-2.5 py-1 text-[12px] text-[var(--muted)] capitalize">
-                    {u.role}
-                  </span>
+                  <div className="w-[128px]">
+                    <Select
+                      value={u.role}
+                      onChange={(role) => changeRole(u, role)}
+                      width={128}
+                      options={[
+                        { value: "user", label: "User" },
+                        { value: "admin", label: "Admin" },
+                      ]}
+                    />
+                  </div>
                 </td>
                 <td className="px-4 py-3 text-right">
                   {changingId === u.id ? (

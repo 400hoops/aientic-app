@@ -105,11 +105,24 @@ export default function Sidebar({
         )}
 
         {conversations.map((c) => (
+          // A div, not a button: the row contains its own button (delete),
+          // and a button inside a button is invalid. role/tabIndex/keydown
+          // give it the same keyboard behaviour a button would.
           <div
             key={c.id}
+            role="button"
+            tabIndex={0}
+            aria-label={c.title}
             onClick={() => onOpen(c.id)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onOpen(c.id);
+              }
+            }}
             className={`group flex cursor-pointer items-center justify-between gap-1 rounded-lg
-                        px-2.5 py-[7px] transition-colors
+                        px-2.5 py-[7px] transition-colors outline-none
+                        focus-visible:ring-2 focus-visible:ring-[var(--focus)]
               ${c.id === activeId && view === "chat"
                 ? "bg-[var(--active)]"
                 : "hover:bg-[var(--hover)]"}`}
@@ -120,11 +133,12 @@ export default function Sidebar({
             <button
               onClick={(e) => {
                 e.stopPropagation();
-                onDelete(c.id);
+                if (window.confirm(`Delete “${c.title}”?`)) onDelete(c.id);
               }}
               title="Delete chat"
-              className="shrink-0 rounded p-1 text-[var(--faint)] opacity-0 transition
+              className="shrink-0 rounded p-1 text-[var(--faint)] opacity-0 transition outline-none
                          hover:text-[var(--danger)] group-hover:opacity-100
+                         focus-visible:opacity-100 focus-visible:text-[var(--danger)]
                          max-md:opacity-100"
             >
               <IconTrash className="h-[14px] w-[14px]" />

@@ -32,9 +32,4 @@ export function relativeTime(ts) {
   return pluralize(Math.round(days / 365.25), "year");
 }
 
-export function titleFrom(text) {
-  const clean = String(text).trim().replace(/\s+/g, " ");
-  return clean.length > 48 ? clean.slice(0, 48).trimEnd() + "…" : clean;
-}
-
 export const initial = (name) => (name || "?").trim().charAt(0).toUpperCase();

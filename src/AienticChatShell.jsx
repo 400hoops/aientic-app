@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as api from "./api.js";
+import { copyText } from "./clipboard.js";
 import { isPhone } from "./isPhone.js";
 import Markdown from "./Markdown.jsx";
 import MessageActions from "./MessageActions.jsx";
@@ -89,9 +90,11 @@ export default function AienticChatShell({
   // loader would attach a *second* reader to the same run, so every token
   // landed twice ("HereHere's"). One reader per generation.
   const ownStreamRef = useRef(null);
-  // Which conversation the state below actually holds, as opposed to which
-  // one is selected. They differ for exactly one render after a switch.
-  const shownIdRef = useRef(null);
+  // True while a send/regenerate/edit is in flight, synchronously: the
+  // `streaming` state above only becomes true after a render, and a fast
+  // double-submit inside that window would start two runs (on a new chat,
+  // two conversations).
+  const sendingRef = useRef(false);
   const composerObserverRef = useRef(null);
   // The card, not composerRef itself: composerRef also spans the transparent
   // fade above the card (pt-14) and the safe-area gap below it (pb-5), and a
@@ -106,19 +109,14 @@ export default function AienticChatShell({
   const [composerH, setComposerH] = useState(96);
 
   const messages = conversation?.messages ?? [];
-  // True for exactly the render(s) between navigating to an existing
-  // conversation (by id, e.g. a deep link or a refresh) and its fetch
-  // resolving. Without this, that gap looked identical to a genuinely new,
-  // empty chat — "New chat" title, the empty-state prompt, "No model" — and
-  // then visibly swapped to the real thing a moment later.
-  //
-  // A fresh /new load on first boot has the same shape of problem even with
-  // no conversation to fetch: the model list itself is still in flight, so
-  // the composer would show "No model" / "No models configured yet." for a
-  // moment before the real list lands. !modelsLoaded covers that gap the
-  // same way.
+  // Blank out only when there is genuinely nothing to show yet: a deep link
+  // or refresh whose conversation hasn't arrived, or a fresh /new load whose
+  // model list is still in flight (otherwise the composer would flash "No
+  // model" for a moment). Switching between two existing conversations
+  // keeps the current one on screen until the next one lands — a blank
+  // frame on every click just reads as lag.
   const isLoadingConversation =
-    (!!conversationId && conversation?.id !== conversationId) ||
+    (!!conversationId && conversation === null) ||
     (!conversationId && !modelsLoaded);
   const activeModel = useMemo(
     () => models.find((m) => m.id === modelId) || models[0] || null,
@@ -126,11 +124,6 @@ export default function AienticChatShell({
   );
 
   /* ---------- load ------------------------------------------------------- */
-
-  // Declared before the loader so it is already up to date when that runs.
-  useEffect(() => {
-    shownIdRef.current = conversation?.id ?? null;
-  }, [conversation?.id]);
 
   useEffect(() => {
     idRef.current = conversationId;
@@ -142,13 +135,11 @@ export default function AienticChatShell({
       return;
     }
 
-    // We're already reading this run's stream and already showing it, so our
-    // state is newer than anything the server would hand back.
-    if (
-      ownStreamRef.current === conversationId &&
-      shownIdRef.current === conversationId
-    )
-      return;
+    // We're already reading this run's stream, so our state is newer than
+    // anything the server would hand back: a snapshot lags the live run by
+    // up to a checkpoint, and re-applying it would briefly drop the newest
+    // tokens off the screen. (The stream's own done/error settles it.)
+    if (ownStreamRef.current === conversationId) return;
 
     let cancelled = false;
     const controller = new AbortController();
@@ -508,31 +499,32 @@ export default function AienticChatShell({
 
   const send = useCallback(async () => {
     const text = input.trim();
-    if (!text || streaming || !activeModel) return;
+    if (!text || streaming || !activeModel || sendingRef.current) return;
+    sendingRef.current = true;
+    try {
+      setInput("");
+      let convoId = conversation?.id;
 
-    setInput("");
-    let convoId = conversation?.id;
-
-    // The conversation is created on the first message, so empty shells never
-    // pile up in the sidebar.
-    if (!convoId) {
-      try {
-        const { conversation: created } = await api.createConversation(
-          activeModel.id,
-        );
-        convoId = created.id;
-        idRef.current = convoId;
-        // Claimed before the id goes active: onConversationCreated is what
-        // triggers the loader effect, and it must already see this as ours.
-        ownStreamRef.current = convoId;
-        setConversation(created);
-        onConversationCreated(created);
-      } catch (err) {
-        setError(err.message);
-        setInput(text);
-        return;
+      // The conversation is created on the first message, so empty shells
+      // never pile up in the sidebar.
+      if (!convoId) {
+        try {
+          const { conversation: created } = await api.createConversation(
+            activeModel.id,
+          );
+          convoId = created.id;
+          idRef.current = convoId;
+          // Claimed before the id goes active: onConversationCreated is what
+          // triggers the loader effect, and it must already see this as ours.
+          ownStreamRef.current = convoId;
+          setConversation(created);
+          onConversationCreated(created);
+        } catch (err) {
+          setError(err.message);
+          setInput(text);
+          return;
+        }
       }
-    }
 
     // The header's title used to be guessed here client-side, mirroring
     // the server's rename-on-first-message logic — but a guess computed
@@ -540,55 +532,70 @@ export default function AienticChatShell({
     // The stream's own "start" event now carries the server's authoritative
     // title instead (see streamHandlers), which arrives moments after this
     // and can't be wrong, so there's nothing to compute here any more.
-    setConversation((prev) =>
-      prev
-        ? {
-            ...prev,
-            messages: [
-              ...prev.messages,
-              {
-                id: "local",
-                role: "user",
-                content: text,
-                createdAt: Date.now(),
-              },
-            ],
-          }
-        : prev,
-    );
+      setConversation((prev) =>
+        prev
+          ? {
+              ...prev,
+              messages: [
+                ...prev.messages,
+                {
+                  id: "local",
+                  role: "user",
+                  content: text,
+                  createdAt: Date.now(),
+                },
+              ],
+            }
+          : prev,
+      );
 
-    await run(convoId, { content: text, endpointId: activeModel.id });
+      await run(convoId, { content: text, endpointId: activeModel.id });
+    } finally {
+      sendingRef.current = false;
+    }
   }, [activeModel, conversation, input, onConversationCreated, run, streaming]);
 
   const regenerate = useCallback(async () => {
-    if (!conversation || streaming || !activeModel) return;
-    setConversation((prev) => ({
-      ...prev,
-      messages: prev.messages.filter(
-        (m, i) => !(m.role === "assistant" && i === prev.messages.length - 1),
-      ),
-    }));
-    await run(conversation.id, {
-      regenerate: true,
-      endpointId: activeModel.id,
-    });
+    if (!conversation || streaming || !activeModel || sendingRef.current) return;
+    sendingRef.current = true;
+    try {
+      setConversation((prev) => ({
+        ...prev,
+        messages: prev.messages.filter(
+          (m, i) =>
+            !(m.role === "assistant" && i === prev.messages.length - 1),
+        ),
+      }));
+      await run(conversation.id, {
+        regenerate: true,
+        endpointId: activeModel.id,
+      });
+    } finally {
+      sendingRef.current = false;
+    }
   }, [activeModel, conversation, run, streaming]);
 
   /* ---------- message actions -------------------------------------------- */
 
   const removeMessage = async (messageId) => {
     if (!conversation) return;
-    const { conversation: next } = await api.deleteMessage(
-      conversation.id,
-      messageId,
-    );
-    if (next.messages.length === 0) {
-      // Nothing left to show — an empty shell in the sidebar would just be
-      // clutter, so the conversation goes with its last message.
-      await onConversationDeleted(conversation.id);
-    } else {
-      setConversation(next);
-      onConversationsChanged();
+    try {
+      const { conversation: next } = await api.deleteMessage(
+        conversation.id,
+        messageId,
+      );
+      if (next.messages.length === 0) {
+        // Nothing left to show — an empty shell in the sidebar would just be
+        // clutter, so the conversation goes with its last message.
+        await onConversationDeleted(conversation.id);
+      } else {
+        setConversation(next);
+        onConversationsChanged();
+      }
+    } catch (err) {
+      // A second click that lands before the first delete commits 404s;
+      // surface it rather than letting the rejection go unhandled.
+      setError(err.message);
     }
   };
 
@@ -636,36 +643,10 @@ export default function AienticChatShell({
     }
   };
 
-  // navigator.clipboard is only defined in a secure context (HTTPS or
-  // localhost) — on a phone hitting this over plain HTTP on a LAN IP it's
-  // undefined, so the optional chaining silently did nothing while the UI
-  // still claimed success. execCommand('copy') still works on an insecure
-  // origin, so it's used as the fallback there.
-  const copy = async (text) => {
-    if (navigator.clipboard?.writeText) {
-      try {
-        await navigator.clipboard.writeText(text);
-        return true;
-      } catch {
-        // fall through to the legacy path
-      }
-    }
-    const ta = document.createElement("textarea");
-    ta.value = text;
-    ta.style.position = "fixed";
-    ta.style.opacity = "0";
-    document.body.appendChild(ta);
-    ta.focus();
-    ta.select();
-    let ok = false;
-    try {
-      ok = document.execCommand("copy");
-    } catch {
-      ok = false;
-    }
-    document.body.removeChild(ta);
-    return ok;
-  };
+  // copyText falls back to execCommand('copy') on an insecure origin (a
+  // phone hitting this over plain HTTP on a LAN IP), where
+  // navigator.clipboard is undefined.
+  const copy = (text) => copyText(text);
 
   // On a phone, Enter just inserts a newline — there's no Shift+Enter
   // escape hatch on a software keyboard, so treating Enter as send there
