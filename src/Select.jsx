@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { IconCheck, IconChevronDown, IconSearch } from "./Icons.jsx";
 import { isPhone } from "./isPhone.js";
 
@@ -59,7 +60,10 @@ export default function Select({
   useEffect(() => {
     if (!open) return;
     const onPointer = (e) => {
-      if (!rootRef.current?.contains(e.target)) setOpen(false);
+      // The popover lives in a portal outside rootRef (see below), so an
+      // interaction inside it must not count as "outside" either.
+      if (!rootRef.current?.contains(e.target) && !popRef.current?.contains(e.target))
+        setOpen(false);
     };
     const onKey = (e) => e.key === "Escape" && setOpen(false);
     document.addEventListener("mousedown", onPointer);
@@ -81,51 +85,77 @@ export default function Select({
     if (!open) setQuery("");
   }, [open, searchable]);
 
-  // Keep the popover inside the window. The class-based position (a fixed
-  // width anchored at the trigger's edge) can run off the right of a phone
-  // screen, and an "open upward" popover can run off the top. This measures
-  // it once open and, only when it would be cut off and the other side has
-  // room for the whole thing, nudges or flips it. Runs in a layout effect so
-  // the shift happens in the same frame the popover paints.
+  // The popover is portaled to <body> with fixed coordinates, because an
+  // ancestor scroll/overflow container would otherwise clip it — the Users
+  // table, for instance, scrolls horizontally, and a popover that grew
+  // past the table's edge was cut off at the border. Positioning against
+  // the viewport also makes "keep it on screen" a simple clamping problem.
+  // Runs in a layout effect so the coordinates land in the same frame the
+  // popover first paints (it is invisible until positioned).
   useLayoutEffect(() => {
-    if (!open || matchParent) return;
+    if (!open) return;
     const pop = popRef.current;
     const root = rootRef.current;
     if (!pop || !root) return;
 
     const margin = 8;
-    const popRect = pop.getBoundingClientRect();
-    const rootRect = root.getBoundingClientRect();
     const vw = window.innerWidth;
     const vh = window.innerHeight;
 
-    // Horizontal: clamp so a trigger near an edge can't push it off-screen.
-    let dx = 0;
-    if (popRect.left < margin) dx = margin - popRect.left;
-    else if (popRect.right > vw - margin) dx = vw - margin - popRect.right;
-    if (dx) pop.style.transform = `translateX(${dx}px)`;
-
-    // Vertical: flip to the other side of the trigger if it overflows and
-    // that side has room for the full popover (otherwise leave it — a
-    // half-flip on a very short screen is worse than a clipped edge).
-    if (placement === "bottom") {
-      if (
-        popRect.bottom > vh - margin &&
-        popRect.height + margin * 2 <= rootRect.top
-      ) {
-        // Over the trigger: 8px (the class's mt-2, now on the other side)
-        // clear of its top edge.
-        pop.style.top = "auto";
-        pop.style.bottom = `calc(100% + ${margin}px)`;
+    // What CSS position:relative was previously anchoring to: this element's
+    // own wrapper, or — matchParent — the nearest positioned ancestor (the
+    // composer bar), spanning it the way left-0 right-0 used to.
+    let anchor = root;
+    if (matchParent) {
+      let n = root.parentElement;
+      while (n && n !== document.body) {
+        if (getComputedStyle(n).position !== "static") {
+          anchor = n;
+          break;
+        }
+        n = n.parentElement;
       }
-    } else if (
-      popRect.top < margin &&
-      popRect.height + margin * 2 <= vh - rootRect.bottom
-    ) {
-      pop.style.bottom = "auto";
-      pop.style.top = `calc(100% + ${margin}px)`;
     }
-  }, [open, placement, matchParent]);
+    const a = anchor.getBoundingClientRect();
+    const cs = getComputedStyle(anchor);
+    const insetL = (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.borderLeftWidth) || 0);
+    const insetR = (parseFloat(cs.paddingRight) || 0) + (parseFloat(cs.borderRightWidth) || 0);
+
+    // matchParent spans the anchor's padding box, so its width is set here
+    // (a fixed-position element has no containing box to span); only then
+    // can the box be measured in either direction.
+    if (matchParent)
+      pop.style.width = `${Math.max(0, a.width - insetL - insetR)}px`;
+    const popW = pop.offsetWidth;
+    const popH = pop.offsetHeight;
+
+    let left, top;
+    if (matchParent) {
+      left = a.left + insetL;
+    } else if (align === "right") {
+      left = a.right - popW;
+    } else {
+      left = a.left;
+    }
+    if (placement === "bottom") {
+      top = a.bottom + margin;
+      // Not enough room below, but room above the anchor: flip.
+      if (top + popH > vh - margin && a.top - margin - popH >= margin)
+        top = a.top - margin - popH;
+    } else {
+      top = a.top - margin - popH;
+      if (top < margin && a.bottom + margin + popH <= vh - margin)
+        top = a.bottom + margin;
+    }
+
+    // Final clamp: a very small window can defeat both flip directions.
+    left = Math.min(Math.max(left, margin), vw - popW - margin);
+    top = Math.min(Math.max(top, margin), vh - popH - margin);
+
+    pop.style.left = `${left}px`;
+    pop.style.top = `${top}px`;
+    pop.style.visibility = "visible";
+  }, [open, placement, align, matchParent]);
 
   const visible = query.trim()
     ? options.filter((o) =>
@@ -163,68 +193,76 @@ export default function Select({
         </button>
       )}
 
-      {open && (
-        <div
-          ref={popRef}
-          // matchParent: left-0 right-0 spans the positioned ancestor
-          // exactly, so no explicit width is needed — it's already the
-          // same length as the bar. Otherwise, a fixed pixel width can push
-          // past the right edge of a narrow phone screen when the trigger
-          // sits near the left (the composer's model picker does) — min()
-          // caps it against the viewport instead of letting it overflow.
-          // 24px total margin, matching the composer's own side padding.
-          style={matchParent ? undefined : { width: `min(${width}px, calc(100vw - 24px))` }}
-          className={`absolute z-40 overflow-hidden rounded-xl border border-[var(--border)]
-                      bg-[var(--raised)] shadow-[0_12px_32px_rgba(0,0,0,0.14)]
-                      ${placement === "top" ? "bottom-full mb-2" : "top-full mt-2"}
-                      ${matchParent ? "left-0 right-0" : align === "right" ? "right-0" : "left-0"}`}
-        >
-          {searchable && (
-            <div className="flex items-center gap-2 border-b border-[var(--border)] px-3 py-2.5">
-              <IconSearch className="h-[15px] w-[15px] text-[var(--faint)]" />
-              <input
-                ref={searchRef}
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder={searchPlaceholder}
-                className="w-full bg-transparent text-[13.5px] max-md:text-[16px] text-[var(--text)]
-                           placeholder:text-[var(--faint)] focus:outline-none"
-              />
-            </div>
-          )}
-
-          <div className="max-h-[320px] overflow-y-auto py-1">
-            {visible.length === 0 && (
-              <p className="px-3.5 py-3 text-[13px] text-[var(--faint)]">
-                {query ? "No matches." : emptyLabel}
-              </p>
+      {open &&
+        createPortal(
+          <div
+            ref={popRef}
+            // Fixed, viewport-relative (the layout effect fills in left/top
+            // before the first paint; hidden until then so the unpositioned
+            // state is never seen). matchParent: no width here — the effect
+            // spans the anchor it finds. Otherwise, a fixed pixel width,
+            // capped against a narrow phone screen (the composer's model
+            // picker triggers near the left edge); 24px total margin,
+            // matching the composer's own side padding.
+            style={
+              matchParent
+                ? { position: "fixed", visibility: "hidden" }
+                : {
+                    position: "fixed",
+                    visibility: "hidden",
+                    width: `min(${width}px, calc(100vw - 24px))`,
+                  }
+            }
+            className="z-50 overflow-hidden rounded-xl border border-[var(--border)]
+                     bg-[var(--raised)] shadow-[0_12px_32px_rgba(0,0,0,0.14)]"
+          >
+            {searchable && (
+              <div className="flex items-center gap-2 border-b border-[var(--border)] px-3 py-2.5">
+                <IconSearch className="h-[15px] w-[15px] text-[var(--faint)]" />
+                <input
+                  ref={searchRef}
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder={searchPlaceholder}
+                  className="w-full bg-transparent text-[13.5px] max-md:text-[16px] text-[var(--text)]
+                             placeholder:text-[var(--faint)] focus:outline-none"
+                />
+              </div>
             )}
 
-            {visible.map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                onClick={() => choose(option)}
-                className={`flex w-full items-center gap-2 px-3.5 py-2.5 text-left text-[14px]
-                            ${option.value === value
-                              ? "bg-[var(--hover)] text-[var(--text)]"
-                              : "text-[var(--text-soft)] hover:bg-[var(--hover)]"}`}
-              >
-                <span className="truncate">{option.label}</span>
-                <StatusDot status={option.status} />
-                {option.note && (
-                  <span className="truncate text-[12px] text-[var(--faint)]">
-                    {option.note}
-                  </span>
-                )}
-                {option.value === value && (
-                  <IconCheck className="ml-auto h-4 w-4 text-[var(--muted)]" />
-                )}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
+            <div className="max-h-[320px] overflow-y-auto py-1">
+              {visible.length === 0 && (
+                <p className="px-3.5 py-3 text-[13px] text-[var(--faint)]">
+                  {query ? "No matches." : emptyLabel}
+                </p>
+              )}
+
+              {visible.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => choose(option)}
+                  className={`flex w-full items-center gap-2 px-3.5 py-2.5 text-left text-[14px]
+                              ${option.value === value
+                                ? "bg-[var(--hover)] text-[var(--text)]"
+                                : "text-[var(--text-soft)] hover:bg-[var(--hover)]"}`}
+                >
+                  <span className="truncate">{option.label}</span>
+                  <StatusDot status={option.status} />
+                  {option.note && (
+                    <span className="truncate text-[12px] text-[var(--faint)]">
+                      {option.note}
+                    </span>
+                  )}
+                  {option.value === value && (
+                    <IconCheck className="ml-auto h-4 w-4 text-[var(--muted)]" />
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>,
+          document.body
+        )}
     </div>
   );
 }
