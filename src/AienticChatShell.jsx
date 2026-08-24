@@ -936,25 +936,15 @@ export default function AienticChatShell({
                 <div key={i} className="mb-10 animate-fade-up">
                   <Reasoning text={m.reasoning} />
                   <Markdown>{m.content}</Markdown>
-                  {/* Before the first token lands there's nothing to draw, so
-                      three staggered dots say "still thinking"; once content
-                      arrives they hand off to the blinking caret. */}
-                  {streaming && isLast && !m.content ? (
-                    <div className="flex items-center gap-1 py-1" role="status" aria-label="Thinking">
-                      <span className="h-1.5 w-1.5 animate-dot rounded-full bg-[var(--muted)] opacity-40" />
-                      <span className="h-1.5 w-1.5 animate-dot rounded-full bg-[var(--muted)] opacity-40"
-                            style={{ animationDelay: "140ms" }} />
-                      <span className="h-1.5 w-1.5 animate-dot rounded-full bg-[var(--muted)] opacity-40"
-                            style={{ animationDelay: "280ms" }} />
-                    </div>
-                  ) : (
-                    streaming &&
-                    isLast && (
-                      <span
-                        className="ml-0.5 inline-block h-[1.05em] w-[2px] translate-y-[3px]
-                                     animate-caret bg-[var(--muted)]"
-                      />
-                    )
+                  {/* A single blinking caret line says "still thinking";
+                      the same caret trails the text once tokens land. */}
+                  {streaming && isLast && (
+                    <span
+                      role="status"
+                      aria-label="Thinking"
+                      className="ml-0.5 inline-block h-[1.05em] w-[2px] translate-y-[3px]
+                                   animate-caret bg-[var(--muted)]"
+                    />
                   )}
                   <MessageActions
                     timestamp={m.createdAt}
