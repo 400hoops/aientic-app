@@ -325,11 +325,28 @@ async function samplerFor(endpointId) {
 /* ---------- endpoints as the browser sees them --------------------------- */
 /* Base URLs and keys never leave the server for non-admins. */
 
+/*
+ * Does this endpoint read attached images?
+ *
+ * llama-server / OpenAI-compatible /v1/models don't report modalities, so
+ * the default is a name-based guess — every common open-weights vision
+ * family (Qwen-VL, LLaVA, MiniCPM, Gemma 3, Pixtral, Phi-4 multimodal, …)
+ * says so in its name. A stored boolean overrides the guess, which is how
+ * the admin table's per-endpoint toggle pins either answer.
+ */
+const VISION_NAME_RE =
+  /(vl|vision|vit|clip|llava|minicpm|gemma[-_.]?3|pixtral|moondream|multimodal|smolvlm|dots|internvl|omni|llama[-_.]?3[.\-]?2|phi[-_.]?4|olmocr|deepseek[-_.]?ocr|kimi[-_.]?vl)/i;
+
+function endpointVision(e) {
+  if (typeof e.vision === "boolean") return e.vision;
+  return VISION_NAME_RE.test(`${e.modelParam} ${e.label}`);
+}
+
 const publicEndpoint = (e) => ({
   id: e.id,
   label: e.label,
   note: e.note || "",
-  vision: !!e.vision,
+  vision: endpointVision(e),
 });
 
 const adminEndpoint = (e) => ({
@@ -452,9 +469,11 @@ app.post("/api/admin/endpoints", requireAdmin, (req, res) => {
     note: (note || "").trim(),
     baseUrl: base,
     modelParam: modelParam.trim(),
-    vision: !!vision,
     createdAt: Date.now(),
   };
+  // Only an explicit boolean pins it; a missing flag leaves the name-based
+  // guess (endpointVision) in charge.
+  if (vision === true || vision === false) endpoint.vision = !!vision;
   db.endpoints.push(endpoint);
   if (apiKey?.trim()) db.keys[base] = apiKey.trim();
   save();

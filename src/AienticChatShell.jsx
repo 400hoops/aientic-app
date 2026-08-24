@@ -799,9 +799,9 @@ export default function AienticChatShell({
             // to rename yet, there's nothing to send a PATCH for.
             onClick={conversation ? startTitleEdit : undefined}
             title={conversation ? "Rename" : undefined}
-            className={`min-w-0 max-w-sm flex-1 truncate rounded px-1 -mx-1 text-[length:var(--fs-base2)]
+            className={`min-w-0 max-w-sm flex-1 truncate px-1 -mx-1 text-[length:var(--fs-base2)]
                         text-[var(--text-soft)]
-                        ${conversation ? "cursor-text hover:bg-[var(--hover)]" : ""}`}
+                        ${conversation ? "cursor-text" : ""}`}
           >
             {conversation?.title || "New chat"}
           </span>

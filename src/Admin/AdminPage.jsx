@@ -98,7 +98,10 @@ function Endpoints({ onChanged }) {
 
   const addManual = () =>
     guard(async () => {
-      await api.addEndpoint({ ...manual, baseUrl, apiKey });
+      // Checked pins vision: true; unchecked leaves it unset so the
+      // server's name-based guess applies.
+      const { vision, ...rest } = manual;
+      await api.addEndpoint({ ...rest, baseUrl, apiKey, ...(vision ? { vision: true } : {}) });
       setManual({ label: "", note: "", modelParam: "", vision: false });
       await load();
       onChanged?.();
@@ -265,7 +268,7 @@ function Endpoints({ onChanged }) {
                   }
                   className="h-4 w-4 accent-[var(--text)]"
                 />
-                Supports vision (accepts attached images)
+                Supports vision (unchecked = auto-detect from the model name)
               </label>
               <button
                 onClick={addManual}
