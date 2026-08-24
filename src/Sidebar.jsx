@@ -19,21 +19,6 @@ import { initial } from "./format.js";
  * overlay in App.
  */
 export default function Sidebar({ brand = "Aientic", user, view, conversations, activeId, filter, theme, onFilter, onNewChat, onOpen, onDelete, onNavigate, onToggleTheme, onSignOut, onHide }) {
-  user,
-  view,
-  conversations,
-  activeId,
-  filter,
-  theme,
-  onFilter,
-  onNewChat,
-  onOpen,
-  onDelete,
-  onNavigate,
-  onToggleTheme,
-  onSignOut,
-  onHide,
-}) {
   const navItem = (key, label, Glyph, onClick) => (
     <button
       onClick={onClick}

@@ -5,7 +5,7 @@ export default function Wordmark({ size = 22, className = "", text = "Aientic" }
       className={`wordmark leading-none tracking-tight text-[var(--text)] ${className}`}
       style={{ fontSize: size }}
     >
-      Aientic
+      {text}
     </span>
   );
 }
