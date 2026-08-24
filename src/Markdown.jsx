@@ -5,6 +5,7 @@ import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import { IconCheck, IconCopy } from "./Icons.jsx";
 import { copyText } from "./clipboard.js";
+import PreviewableImage from "./ImageLightbox.jsx";
 
 /**
  * Assistant output: GitHub-flavoured markdown plus LaTeX.
@@ -85,6 +86,13 @@ const components = {
       {children}
     </a>
   ),
+  img: ({ src, alt, className }) => (
+    <PreviewableImage
+      src={src}
+      alt={alt}
+      className={`my-1.5 max-w-[80%] rounded-lg ${className ?? ""}`}
+    />
+  ),
   blockquote: ({ children }) => (
     <blockquote className="my-4 border-l-2 border-[var(--border-strong)] pl-4 text-[var(--muted)]">
       {children}
@@ -109,12 +117,39 @@ const components = {
   ),
 };
 
+/**
+ * react-markdown's default urlTransform only lets http/https/mailto/…
+ * through, so `data:` images (base64 attachments echoed back in a reply)
+ * came out with an empty src and never rendered. This keeps the default
+ * block on unsafe schemes like `javascript:` while also allowing
+ * `data:image/…`, so inline images are safe and actually display.
+ */
+const SAFE_PROTOCOL = /^(?:https?|ircs?|mailto|xmpp)$/i;
+const safeUrlTransform = (value) => {
+  const colon = value.indexOf(":");
+  const questionMark = value.indexOf("?");
+  const numberSign = value.indexOf("#");
+  const slash = value.indexOf("/");
+  const isProtocol =
+    colon !== -1 &&
+    (slash === -1 || colon < slash) &&
+    (questionMark === -1 || colon < questionMark) &&
+    (numberSign === -1 || colon < numberSign);
+  if (!isProtocol) return value; // relative URL — nothing to check
+  const protocol = value.slice(0, colon).toLowerCase();
+  const allowed =
+    SAFE_PROTOCOL.test(protocol) ||
+    (protocol === "data" && /^data:image\//i.test(value));
+  return allowed ? value : "";
+};
+
 function Markdown({ children }) {
   return (
     <div className="text-[length:var(--fs-body)] leading-[1.72] text-[var(--text)]">
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={[[rehypeKatex, { throwOnError: false }]]}
+        urlTransform={safeUrlTransform}
         components={components}
       >
         {children}

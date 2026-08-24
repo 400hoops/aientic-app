@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as api from "./api.js";
 import { copyText } from "./clipboard.js";
+import PreviewableImage from "./ImageLightbox.jsx";
 import { isPhone } from "./isPhone.js";
 import Markdown from "./Markdown.jsx";
 import MessageActions from "./MessageActions.jsx";
@@ -14,20 +15,6 @@ import {
   IconStop,
   IconX,
 } from "./Icons.jsx";
-
-function PreviewableImage({ src, alt = "", className = "" }) {
-  const [preview, setPreview] = useState(null);
-  return (
-    <>
-      <img src={src} alt={alt} className={className} onClick={() => setPreview(src)} />
-      {preview && (
-        <div onClick={() => setPreview(null)} className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
-          <img src={preview} className="max-h-screen max-w-screen object-contain" />
-        </div>
-      )}
-    </>
-  );
-}
 
 /* ---------- attachments --------------------------------------------------
 
@@ -120,7 +107,8 @@ export default function AienticChatShell({
   const [titleEditing, setTitleEditing] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
   const [atBottom, setAtBottom] = useState(true);
-  const [images, setImages] = useState([]);\n  const [preview, setPreview] = useState(null); // pending: { id, url (data URL) }
+  const [images, setImages] = useState([]);
+  const [preview, setPreview] = useState(null); // pending: { id, url (data URL) }
   const [imgError, setImgError] = useState(null);
   const fileRef = useRef(null);
 
@@ -928,7 +916,7 @@ export default function AienticChatShell({
                           {m.images?.length > 0 && (
                             <span className="mb-1.5 flex flex-wrap gap-1.5">
                               {m.images.map((url, j) => (
-                                <PreviewableImage src={url} className="max-h-32 max-w-[220px] rounded-lg object-cover" />
+                                <PreviewableImage key={`${m.id}-${j}`} src={url} className="max-h-32 max-w-[220px] rounded-lg object-cover" />
                               ))}
                             </span>
                           )}
@@ -1064,7 +1052,7 @@ export default function AienticChatShell({
                 <div className="flex flex-wrap items-center gap-2 px-1 pt-2">
                   {images.map((img) => (
                     <div key={img.id} className="relative animate-scale-in">
-                      <img
+                      <PreviewableImage
                         src={img.url}
                         alt={img.id}
                         className="h-14 w-14 rounded-lg object-cover"
