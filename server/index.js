@@ -809,8 +809,12 @@ app.post("/api/conversations/:id/stream", requireAuth, async (req, res) => {
   if (isGenerating(convo.id))
     return bad(res, 409, "That conversation is already generating");
 
-  const { content, endpointId, regenerate } = req.body || {};
+  const { content, endpointId, regenerate, timeZone } = req.body || {};
   const images = sanitizeImages(req.body?.images);
+  // The browser's IANA timezone, so {{CURRENT_*}} tokens resolve to where
+  // the user is, not where the server runs. Invalid values fall back to
+  // the server's clock inside expandSystemPrompt.
+  const clientTimeZone = typeof timeZone === "string" ? timeZone : undefined;
   const endpoint = db.endpoints.find(
     (e) => e.id === (endpointId || convo.endpointId)
   );
@@ -854,6 +858,8 @@ app.post("/api/conversations/:id/stream", requireAuth, async (req, res) => {
     sampler: await samplerFor(endpoint.id),
     apiKey: db.keys[endpoint.baseUrl],
     history: convo.messages.filter((m) => m.role !== "assistant" || m.content),
+    user: req.user,
+    clientTimeZone,
   });
 });
 

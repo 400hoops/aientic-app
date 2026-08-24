@@ -145,6 +145,63 @@ export function stopGeneration(conversationId) {
   return true;
 }
 
+/**
+ * Fill the {{PLACEHOLDER}} tokens in a system prompt with real-world values
+ * at the moment the turn is sent:
+ *
+ *   {{CURRENT_WEEKDAY}}   Saturday
+ *   {{CURRENT_DATETIME}}  2026-08-23 21:45
+ *   {{CURRENT_TIMEZONE}}  America/New_York
+ *   {{USER_NAME}}         the signed-in user's username
+ *
+ * The clock is evaluated per request, in the client's timezone when it
+ * reported one (otherwise the server's). Unknown tokens are left untouched,
+ * so other custom placeholders in the prompt survive.
+ */
+export function expandSystemPrompt(template, { userName, timeZone } = {}) {
+  const date = new Date();
+  let tz = typeof timeZone === "string" && timeZone ? timeZone : undefined;
+  if (tz) {
+    try {
+      new Intl.DateTimeFormat("en-US", { timeZone: tz });
+    } catch {
+      tz = undefined; // not a real IANA zone — fall back to the server's
+    }
+  }
+  if (!tz) tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+  const weekday = new Intl.DateTimeFormat("en-US", {
+    weekday: "long",
+    timeZone: tz,
+  }).format(date);
+
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: tz,
+      hourCycle: "h23",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    })
+      .formatToParts(date)
+      .map((p) => [p.type, p.value])
+  );
+  const datetime = `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`;
+
+  const vars = {
+    CURRENT_WEEKDAY: weekday,
+    CURRENT_DATETIME: datetime,
+    CURRENT_TIMEZONE: tz,
+    USER_NAME: userName || "",
+  };
+
+  return template.replace(/\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g, (match, name) =>
+    name in vars ? vars[name] : match
+  );
+}
+
 export async function streamCompletion({
   res,
   conversation,
@@ -152,6 +209,8 @@ export async function streamCompletion({
   sampler,
   apiKey,
   history,
+  user,
+  clientTimeZone,
 }) {
   const assistant = {
     id: uid(),
@@ -201,8 +260,17 @@ export async function streamCompletion({
       : { role: m.role, content: m.content };
 
   const messages = [];
-  if (sampler?.systemPrompt?.trim())
-    messages.push({ role: "system", content: sampler.systemPrompt.trim() });
+  if (sampler?.systemPrompt?.trim()) {
+    // {{CURRENT_*}} / {{USER_NAME}} resolve to the real clock at send time,
+    // in the sender's timezone.
+    messages.push({
+      role: "system",
+      content: expandSystemPrompt(sampler.systemPrompt, {
+        userName: user?.username,
+        timeZone: clientTimeZone,
+      }),
+    });
+  }
   for (const m of history) messages.push(upstreamMessage(m));
 
   const split = createReasoningSplitter();

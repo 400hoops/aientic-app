@@ -154,7 +154,15 @@ export async function streamTurn(
     method: "POST",
     credentials: "same-origin",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ content, endpointId, regenerate, images }),
+    body: JSON.stringify({
+      content,
+      endpointId,
+      regenerate,
+      images,
+      // Where the user is, so {{CURRENT_WEEKDAY}} / {{CURRENT_DATETIME}} /
+      // {{CURRENT_TIMEZONE}} resolve to their clock, not the server's.
+      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    }),
     signal,
   });
 

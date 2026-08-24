@@ -247,6 +247,9 @@ export default function SamplerPage({
                              text-[var(--text)] placeholder:text-[var(--faint)]
                              focus:border-[var(--focus)] focus:outline-none"
                 />
+                <div className="mt-2 text-[12.5px] leading-relaxed text-[var(--faint)]">
+                  {"{{CURRENT_WEEKDAY}}, {{CURRENT_DATETIME}} and {{CURRENT_TIMEZONE}} are filled with the user's real clock at send time; {{USER_NAME}} is replaced with the signed-in user's name. Anything else in {{DOUBLE_BRACES}} is left as-is."}
+                </div>
               </label>
             </div>
           )}
