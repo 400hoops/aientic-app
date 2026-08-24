@@ -43,6 +43,7 @@ export default function MessageActions({
   return (
     <div
       className={`mt-2 flex items-center gap-1 text-[length:var(--fs-meta)] text-[var(--faint)] transition-opacity
+                  duration-300 ease-swift
                   ${hidden ? "pointer-events-none opacity-0" : "opacity-100"}`}
     >
       <span className="mr-1 tabular-nums">{relativeTime(timestamp)}</span>

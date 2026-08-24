@@ -22,7 +22,7 @@ export default function AdminShell({
   );
 
   return (
-    <div className="flex min-w-0 flex-1 flex-col">
+    <div className="flex min-w-0 animate-fade-in flex-1 flex-col">
       <header style={{ transform: "translateZ(0)" }}
       className="sticky top-0 z-10 bg-[var(--bg)] flex h-14 shrink-0 items-center gap-2 border-b border-[var(--border)] px-4">
         {!sidebarOpen && (

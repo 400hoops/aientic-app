@@ -63,7 +63,9 @@ if (trustProxy)
     /^\d+$/.test(trustProxy) ? Number(trustProxy) : trustProxy
   );
 
-app.use(express.json({ limit: "8mb" }));
+// 64 MB, not the default: a chat turn can carry up to four base64 photos
+// (see sanitizeImages), and base64 inflates the binary by a third.
+app.use(express.json({ limit: "64mb" }));
 app.use(cookieParser());
 app.use(attachUser);
 
@@ -151,8 +153,9 @@ const clearLoginAttempts = (req) => loginAttempts.delete(req.ip);
 /* ---------- input bounds ------------------------------------------------- */
 
 /**
- * express.json already caps the whole body at 8 MB; these stop a valid, small
- * request from still storing an unreasonable string in the database.
+ * express.json already caps the whole body at 64 MB (headroom for base64
+ * photos); these stop a valid, small request from still storing an
+ * unreasonable string in the database.
  */
 const MAX_LEN = {
   username: 64,
@@ -163,10 +166,33 @@ const MAX_LEN = {
   title: 200,
   content: 100_000,
   systemPrompt: 20_000,
+  imageDataUrl: 12_000_000, // ≈9 MB of image in base64
 };
 
 const tooLong = (value, max) =>
   typeof value === "string" && value.length > max;
+
+// The only image formats an upstream vision model is asked to decode —
+// mirrors the client's accept list, applied to what actually arrives.
+const IMAGE_RE = /^data:image\/(jpeg|png|gif);base64,[A-Za-z0-9+/=]+$/;
+const MAX_IMAGES = 4;
+
+/**
+ * req.body.images → at most four jpeg/png/gif data URLs. Anything that
+ * isn't a string, isn't one of the three mime types, or is oversized is
+ * dropped rather than rejecting the whole turn.
+ */
+const sanitizeImages = (raw) =>
+  !Array.isArray(raw)
+    ? []
+    : raw
+        .filter(
+          (s) =>
+            typeof s === "string" &&
+            IMAGE_RE.test(s) &&
+            s.length <= MAX_LEN.imageDataUrl
+        )
+        .slice(0, MAX_IMAGES);
 
 /** normaliseBase + the blocklist + a length cap, as one check. */
 const baseProblem = (base) => {
@@ -753,6 +779,7 @@ app.post("/api/conversations/:id/stream", requireAuth, async (req, res) => {
     return bad(res, 409, "That conversation is already generating");
 
   const { content, endpointId, regenerate } = req.body || {};
+  const images = sanitizeImages(req.body?.images);
   const endpoint = db.endpoints.find(
     (e) => e.id === (endpointId || convo.endpointId)
   );
@@ -767,8 +794,10 @@ app.post("/api/conversations/:id/stream", requireAuth, async (req, res) => {
     )
       convo.messages.pop();
   } else {
-    if (!content?.trim()) return bad(res, 400, "Message is empty");
-    if (content.length > MAX_LEN.content)
+    const text = content?.trim();
+    // A turn is valid with text, photos, or both — but not neither.
+    if (!text && !images.length) return bad(res, 400, "Message is empty");
+    if (text && text.length > MAX_LEN.content)
       return bad(
         res,
         400,
@@ -777,10 +806,11 @@ app.post("/api/conversations/:id/stream", requireAuth, async (req, res) => {
     convo.messages.push({
       id: uid(),
       role: "user",
-      content: content.trim(),
+      content: text || "",
+      images,
       createdAt: Date.now(),
     });
-    if (convo.title === "New chat") convo.title = titleFrom(content);
+    if (convo.title === "New chat" && text) convo.title = titleFrom(text);
   }
 
   convo.updatedAt = Date.now();

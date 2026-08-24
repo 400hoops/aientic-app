@@ -122,7 +122,7 @@ export default function SamplerPage({
   const set = (key, value) => setSampler((prev) => ({ ...prev, [key]: value }));
 
   return (
-    <div className="flex min-w-0 flex-1 flex-col">
+    <div className="flex min-w-0 animate-fade-in flex-1 flex-col">
       <header style={{ transform: "translateZ(0)" }}
       className="sticky top-0 z-10 bg-[var(--bg)] flex h-14 shrink-0 items-center gap-3 border-b border-[var(--border)] px-4">
         {!sidebarOpen && (
@@ -160,14 +160,16 @@ export default function SamplerPage({
           )}
 
           {error && (
-            <div className="mb-6 rounded-lg border border-[var(--danger-border)] bg-[var(--danger-bg)]
+            <div className="mb-6 animate-fade-up rounded-lg border border-[var(--danger-border)] bg-[var(--danger-bg)]
                             px-4 py-3 text-[14px] text-[var(--danger)]">
               {error}
             </div>
           )}
 
+          {/* Keyed on the model: switching models remounts the block and the
+              settings settle in again rather than swapping in place. */}
           {selected && sampler && (
-            <>
+            <div key={selected.id} className="animate-fade-up">
               {/* The save status shares this row, so its slot is always
                   present at a fixed width: an empty span would change the
                   row's baseline (shifting the page) and let "Reset to
@@ -246,7 +248,7 @@ export default function SamplerPage({
                              focus:border-[var(--focus)] focus:outline-none"
                 />
               </label>
-            </>
+            </div>
           )}
         </div>
       </div>

@@ -145,14 +145,14 @@ async function readSse(res, handlers) {
 
 export async function streamTurn(
   conversationId,
-  { content, endpointId, regenerate = false, signal },
+  { content, endpointId, regenerate = false, images, signal },
   handlers = {},
 ) {
   const res = await fetch(`/api/conversations/${conversationId}/stream`, {
     method: "POST",
     credentials: "same-origin",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ content, endpointId, regenerate }),
+    body: JSON.stringify({ content, endpointId, regenerate, images }),
     signal,
   });
 

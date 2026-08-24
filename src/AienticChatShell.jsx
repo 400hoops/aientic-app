@@ -10,8 +10,29 @@ import {
   IconArrowUp,
   IconChevronRight,
   IconPanel,
+  IconPlus,
   IconStop,
+  IconX,
 } from "./Icons.jsx";
+
+/* ---------- attachments --------------------------------------------------
+
+ * The only photos a vision model can look at are still images, so the
+ * composer accepts JPEG, PNG and GIF — read to base64 data URLs on the
+ * client and carried inside the same JSON turn as the text (the server
+ * re-validates and reshapes them into image_url parts for the upstream).
+ */
+const ATTACH_TYPES = ["image/jpeg", "image/png", "image/gif"];
+const MAX_ATTACHMENTS = 4;
+const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
+
+const fileToDataUrl = (file) =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
 
 /**
  * The conversation view.
@@ -35,19 +56,29 @@ function Reasoning({ text }) {
         {/* The glyph is inset in its 24px box, so the row hangs ~5px left to
             put the stroke on the same edge as the message text below. */}
         <IconChevronRight
-          className={`-ml-[5px] h-3.5 w-3.5 transition-transform ${open ? "rotate-90" : ""}`}
+          className={`-ml-[5px] h-3.5 w-3.5 transition-transform duration-200 ${open ? "rotate-90" : ""}`}
         />
         Reasoning
       </button>
 
-      {open && (
-        <div
-          className="mt-2 whitespace-pre-wrap border-l-2 border-[var(--border-strong)] pl-3.5
+      {/* The panel stays mounted; the 0fr/1fr grid row animates the height.
+          A conditional unmount would snap it open and closed. */}
+      <div
+        className={`grid transition-[grid-template-rows] duration-300 ease-swift
+                    motion-reduce:transition-none ${open ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}
+      >
+        {/* min-h-0: a grid item is min-height:auto by default, which would
+            stop it collapsing below the text's own height and leave a gap
+            in the "closed" state. */}
+        <div className="min-h-0 overflow-hidden">
+          <div
+            className="mt-2 whitespace-pre-wrap border-l-2 border-[var(--border-strong)] pl-3.5
                         text-[length:var(--fs-meta)] leading-[1.7] text-[var(--muted)]"
-        >
-          {text}
+          >
+            {text}
+          </div>
         </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -75,6 +106,9 @@ export default function AienticChatShell({
   const [titleEditing, setTitleEditing] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
   const [atBottom, setAtBottom] = useState(true);
+  const [images, setImages] = useState([]); // pending: { id, url (data URL) }
+  const [imgError, setImgError] = useState(null);
+  const fileRef = useRef(null);
 
   const abortRef = useRef(null);
   const scrollRef = useRef(null);
@@ -497,12 +531,51 @@ export default function AienticChatShell({
     [onConversationsChanged, streamHandlers],
   );
 
+  /* ---------- attachments ------------------------------------------------ */
+
+  // The accept attribute only filters the dialog; the File objects are
+  // re-checked here, since the picker can still surface anything (e.g. a
+  // drag-and-drop-capable browser honouring only the types it knows).
+  const addFiles = async (list) => {
+    setImgError(null);
+    const next = [];
+    let problem = null;
+    for (const file of list) {
+      if (images.length + next.length >= MAX_ATTACHMENTS) {
+        problem = `You can attach up to ${MAX_ATTACHMENTS} images.`;
+        break;
+      }
+      if (!ATTACH_TYPES.includes(file.type)) {
+        problem = "Only JPEG, PNG and GIF images can be attached.";
+        continue;
+      }
+      if (file.size > MAX_ATTACHMENT_BYTES) {
+        problem = "Images must be at most 8 MB.";
+        continue;
+      }
+      next.push({
+        // name+size+lastModified: stable enough to key the preview, unique
+        // enough that re-picking a same-named file still adds a second slot.
+        id: `${file.name}-${file.size}-${file.lastModified}-${file.type}`,
+        url: await fileToDataUrl(file),
+      });
+    }
+    if (next.length) setImages((prev) => [...prev, ...next]);
+    setImgError(problem);
+  };
+
+  const removeImage = (id) =>
+    setImages((prev) => prev.filter((img) => img.id !== id));
+
   const send = useCallback(async () => {
     const text = input.trim();
-    if (!text || streaming || !activeModel || sendingRef.current) return;
+    const attached = images;
+    // Text, photos, or both — but not an empty turn.
+    if ((!text && !attached.length) || streaming || !activeModel || sendingRef.current) return;
     sendingRef.current = true;
     try {
       setInput("");
+      setImages([]);
       let convoId = conversation?.id;
 
       // The conversation is created on the first message, so empty shells
@@ -522,6 +595,7 @@ export default function AienticChatShell({
         } catch (err) {
           setError(err.message);
           setInput(text);
+          setImages(attached);
           return;
         }
       }
@@ -542,6 +616,9 @@ export default function AienticChatShell({
                   id: "local",
                   role: "user",
                   content: text,
+                  // Same shape the server persists (data-URL strings), so the
+                  // bubble renders identically before the refresh round-trip.
+                  images: attached.map((img) => img.url),
                   createdAt: Date.now(),
                 },
               ],
@@ -549,11 +626,15 @@ export default function AienticChatShell({
           : prev,
       );
 
-      await run(convoId, { content: text, endpointId: activeModel.id });
+      await run(convoId, {
+        content: text,
+        endpointId: activeModel.id,
+        images: attached.map((img) => img.url),
+      });
     } finally {
       sendingRef.current = false;
     }
-  }, [activeModel, conversation, input, onConversationCreated, run, streaming]);
+  }, [activeModel, conversation, images, input, onConversationCreated, run, streaming]);
 
   const regenerate = useCallback(async () => {
     if (!conversation || streaming || !activeModel || sendingRef.current) return;
@@ -673,7 +754,7 @@ export default function AienticChatShell({
   }
 
   return (
-    <div className="flex min-w-0 flex-1 flex-col">
+    <div className="flex min-w-0 animate-fade-in flex-1 flex-col">
       <header style={{ transform: "translateZ(0)" }}
       className="sticky top-0 z-10 bg-[var(--bg)] flex h-14 shrink-0 items-center gap-3 border-b border-[var(--border)] px-4">
         {!sidebarOpen && (
@@ -732,6 +813,12 @@ export default function AienticChatShell({
           className="h-full overflow-y-scroll"
         >
           <div
+            // Keyed on the conversation so switching chats remounts the list
+            // and every message settles in again (each child runs its
+            // animate-fade-up). Within a conversation this key is stable, so
+            // appending a message only remounts the new row, never the ones
+            // already on screen.
+            key={conversation?.id ?? "new"}
             // cardClearance, not composerH: the top of composerRef is
             // transparent fade, not the input card, so reserving all of
             // composerH left a visibly larger gap than the layout actually
@@ -748,10 +835,11 @@ export default function AienticChatShell({
               // m-auto centres it in the column once the column is at least as
               // tall as the scroller.
               <div className="m-auto text-center">
-                <p className="text-[length:var(--fs-lg)] text-[var(--text-soft)]">
+                <p className="animate-fade-up text-[length:var(--fs-lg)] text-[var(--text-soft)]">
                   What are we testing today?
                 </p>
-                <p className="mt-2 text-[length:var(--fs-sm2)] text-[var(--faint)]">
+                <p className="mt-2 animate-fade-up text-[length:var(--fs-sm2)] text-[var(--faint)]
+                            [animation-delay:90ms]">
                   {activeModel
                     ? `${activeModel.label}${activeModel.note ? ` · ${activeModel.note}` : ""}`
                     : "No models configured yet."}
@@ -765,7 +853,12 @@ export default function AienticChatShell({
               if (m.role === "user") {
                 const isEditing = editing?.id === m.id;
                 return (
-                  <div key={m.id || i} className="mb-8 flex flex-col items-end">
+                  // Index key, not the message id: the assistant bubble is
+                  // first mounted as the optimistic "pending" row and then
+                  // patched to the server's real id. Keying by id would remount
+                  // it at that moment and replay the fade mid-generation; the
+                  // index is stable across that swap, so it settles in once.
+                  <div key={i} className="mb-8 flex animate-fade-up flex-col items-end">
                     {isEditing ? (
                       <div className="w-full max-w-[85%]">
                         <textarea
@@ -809,6 +902,18 @@ export default function AienticChatShell({
                           className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md
                                       bg-[var(--hover)] px-4 py-2.5 text-[length:var(--fs-md)] leading-[1.65]"
                         >
+                          {m.images?.length > 0 && (
+                            <span className="mb-1.5 flex flex-wrap gap-1.5">
+                              {m.images.map((url, j) => (
+                                <img
+                                  key={j}
+                                  src={url}
+                                  alt=""
+                                  className="max-h-32 max-w-[220px] rounded-lg object-cover"
+                                />
+                              ))}
+                            </span>
+                          )}
                           {m.content}
                         </div>
                         <MessageActions
@@ -827,14 +932,29 @@ export default function AienticChatShell({
               }
 
               return (
-                <div key={m.id || i} className="mb-10">
+                // See the index-key note on the user message above.
+                <div key={i} className="mb-10 animate-fade-up">
                   <Reasoning text={m.reasoning} />
                   <Markdown>{m.content}</Markdown>
-                  {streaming && isLast && (
-                    <span
-                      className="ml-0.5 inline-block h-[1.05em] w-[2px] translate-y-[3px]
-                                   animate-pulse bg-[var(--muted)]"
-                    />
+                  {/* Before the first token lands there's nothing to draw, so
+                      three staggered dots say "still thinking"; once content
+                      arrives they hand off to the blinking caret. */}
+                  {streaming && isLast && !m.content ? (
+                    <div className="flex items-center gap-1 py-1" role="status" aria-label="Thinking">
+                      <span className="h-1.5 w-1.5 animate-dot rounded-full bg-[var(--muted)] opacity-40" />
+                      <span className="h-1.5 w-1.5 animate-dot rounded-full bg-[var(--muted)] opacity-40"
+                            style={{ animationDelay: "140ms" }} />
+                      <span className="h-1.5 w-1.5 animate-dot rounded-full bg-[var(--muted)] opacity-40"
+                            style={{ animationDelay: "280ms" }} />
+                    </div>
+                  ) : (
+                    streaming &&
+                    isLast && (
+                      <span
+                        className="ml-0.5 inline-block h-[1.05em] w-[2px] translate-y-[3px]
+                                     animate-caret bg-[var(--muted)]"
+                      />
+                    )
                   )}
                   <MessageActions
                     timestamp={m.createdAt}
@@ -849,7 +969,7 @@ export default function AienticChatShell({
 
             {error && (
               <div
-                className="mb-8 rounded-lg border border-[var(--danger-border)] bg-[var(--danger-bg)]
+                className="mb-8 animate-fade-up rounded-lg border border-[var(--danger-border)] bg-[var(--danger-bg)]
                             px-4 py-3 text-[14px] text-[var(--danger)]"
               >
                 {error}
@@ -864,7 +984,7 @@ export default function AienticChatShell({
             title="Scroll to bottom"
             aria-label="Scroll to bottom"
             style={{ bottom: composerH + 12 }}
-            className="absolute left-1/2 z-10 -translate-x-1/2 rounded-full border
+            className="absolute left-1/2 z-10 -translate-x-1/2 animate-scale-in rounded-full border
                        border-[var(--border)] bg-[var(--raised)] p-2.5 text-[var(--muted)]
                        shadow-[0_2px_10px_rgba(0,0,0,0.15)] transition-colors
                        hover:text-[var(--text)]"
@@ -932,33 +1052,92 @@ export default function AienticChatShell({
                          text-[var(--text)] placeholder:text-[var(--faint)] focus:outline-none"
               />
 
+              {images.length > 0 && (
+                <div className="flex flex-wrap items-center gap-2 px-1 pt-2">
+                  {images.map((img) => (
+                    <div key={img.id} className="relative animate-scale-in">
+                      <img
+                        src={img.url}
+                        alt={img.id}
+                        className="h-14 w-14 rounded-lg object-cover"
+                      />
+                      <button
+                        onClick={() => removeImage(img.id)}
+                        title="Remove"
+                        className="absolute -right-1.5 -top-1.5 rounded-full
+                                   border border-[var(--border)] bg-[var(--raised)] p-[3px]
+                                   text-[var(--muted)] hover:text-[var(--text)]"
+                      >
+                        <IconX className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ))}
+                  {imgError && (
+                    <span className="text-[12px] text-[var(--danger)]">{imgError}</span>
+                  )}
+                </div>
+              )}
+              {imgError && images.length === 0 && (
+                <p className="px-1 pt-1.5 text-[12px] text-[var(--danger)]">{imgError}</p>
+              )}
+
               <div className="flex items-center justify-between pt-1">
-                <ModelPicker
-                  models={models}
-                  value={activeModel?.id}
-                  onChange={onModelChange}
-                  disabled={streaming}
-                  placement="top"
-                  status={modelStatus}
-                  matchParent
-                />
+                <div className="flex min-w-0 items-center gap-1">
+                  <ModelPicker
+                    models={models}
+                    value={activeModel?.id}
+                    onChange={onModelChange}
+                    disabled={streaming}
+                    placement="top"
+                    status={modelStatus}
+                    matchParent
+                  />
+                  {/* h-7 w-7 = 28px, the same height as the picker's trigger
+                      (py-1 + its 20px text line), so the pair reads as one
+                      control. Opens the native picker; the accept list is
+                      the first gate, addFiles re-checks every file. */}
+                  <button
+                    onClick={() => fileRef.current?.click()}
+                    disabled={streaming}
+                    title="Attach photos (JPEG, PNG or GIF)"
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md
+                               text-[var(--muted)] transition-colors hover:bg-[var(--panel)]
+                               disabled:opacity-50"
+                  >
+                    <IconPlus className="h-[18px] w-[18px]" />
+                  </button>
+                  <input
+                    ref={fileRef}
+                    type="file"
+                    accept="image/jpeg,image/png,image/gif"
+                    multiple
+                    className="hidden"
+                    onChange={(e) => {
+                      addFiles([...e.target.files]);
+                      e.target.value = ""; // allow re-picking the same file
+                    }}
+                  />
+                </div>
 
                 {streaming ? (
                   <button
                     onClick={stop}
                     title="Stop generating"
-                    className="rounded-lg bg-[var(--text)] p-2 text-[var(--bg)]"
+                    className="rounded-lg bg-[var(--text)] p-2 text-[var(--bg)]
+                               transition-transform duration-150 active:scale-95"
                   >
                     <IconStop className="h-4 w-4" />
                   </button>
                 ) : (
                   <button
                     onClick={send}
-                    disabled={!input.trim() || !activeModel}
+                    disabled={(!input.trim() && images.length === 0) || !activeModel}
                     title="Send"
-                    className="rounded-lg bg-[var(--text)] p-2 text-[var(--bg)] transition-opacity
-                             hover:opacity-90 disabled:cursor-not-allowed
-                             disabled:bg-[var(--border)] disabled:text-[var(--muted)]"
+                    className="rounded-lg bg-[var(--text)] p-2 text-[var(--bg)]
+                             transition-[background-color,opacity,scale] duration-150
+                             active:scale-95 hover:opacity-90 disabled:cursor-not-allowed
+                             disabled:bg-[var(--border)] disabled:text-[var(--muted)]
+                             disabled:active:scale-100"
                   >
                     <IconArrowUp className="h-4 w-4" />
                   </button>

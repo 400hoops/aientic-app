@@ -213,8 +213,9 @@ export default function Select({
                     width: `min(${width}px, calc(100vw - 24px))`,
                   }
             }
-            className="z-50 overflow-hidden rounded-xl border border-[var(--border)]
-                     bg-[var(--raised)] shadow-[0_12px_32px_rgba(0,0,0,0.14)]"
+            className={`z-50 overflow-hidden rounded-xl border border-[var(--border)]
+                     bg-[var(--raised)] shadow-[0_12px_32px_rgba(0,0,0,0.14)]
+                     animate-scale-in ${placement === "top" ? "origin-bottom" : "origin-top"}`}
           >
             {searchable && (
               <div className="flex items-center gap-2 border-b border-[var(--border)] px-3 py-2.5">

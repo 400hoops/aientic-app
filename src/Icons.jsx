@@ -23,6 +23,7 @@ import {
   Square,
   Sun,
   Trash2,
+  X,
 } from "lucide-react";
 
 const thin = (Base, name) => {
@@ -49,3 +50,4 @@ export const IconSliders = thin(SlidersHorizontal, "IconSliders");
 export const IconStop = thin(Square, "IconStop");
 export const IconSun = thin(Sun, "IconSun");
 export const IconTrash = thin(Trash2, "IconTrash");
+export const IconX = thin(X, "IconX");

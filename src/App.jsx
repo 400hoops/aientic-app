@@ -328,7 +328,7 @@ export default function App() {
   );
 
   return (
-    <div className="flex h-full bg-[var(--bg)] text-[var(--text)] antialiased">
+    <div className="flex h-full animate-fade-in bg-[var(--bg)] text-[var(--text)] antialiased">
       {/* Desktop: the sidebar takes space in the row, so showing/hiding it
           has to animate that space rather than just the sidebar itself —
           the outer wrapper's width slides between 0 and 268px with the
@@ -337,7 +337,7 @@ export default function App() {
           mounted (unlike before) so there's something to animate from. */}
       <div
         className={`max-md:hidden shrink-0 overflow-hidden transition-[width]
-                    duration-200 ease-out motion-reduce:transition-none
+                    duration-300 ease-drawer motion-reduce:transition-none
                     ${sidebarOpen ? "w-[268px]" : "w-0"}`}
       >
         <div className="h-full w-[268px]">{sidebar}</div>
@@ -350,7 +350,7 @@ export default function App() {
         <div
           onClick={() => setSidebarOpen(false)}
           aria-hidden="true"
-          className={`fixed inset-0 z-40 bg-black/35 transition-opacity duration-200
+          className={`fixed inset-0 z-40 bg-black/35 transition-opacity duration-300
                       motion-reduce:transition-none
                       ${sidebarOpen ? "opacity-100" : "pointer-events-none opacity-0"}`}
         />
@@ -360,7 +360,7 @@ export default function App() {
             while "hidden". Drop the shadow itself while closed. */}
         <div
           className={`fixed inset-y-0 left-0 z-50 w-[268px] max-w-[86vw]
-                      transition-transform duration-200 ease-out
+                      transition-transform duration-300 ease-drawer
                       motion-reduce:transition-none
                       ${sidebarOpen ? "translate-x-0 shadow-xl" : "-translate-x-full shadow-none"}`}
         >

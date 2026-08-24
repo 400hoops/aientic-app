@@ -23,7 +23,7 @@ function Banner({ error, notice }) {
   if (!error && !notice) return null;
   return (
     <div
-      className={`mb-6 rounded-lg border px-4 py-3 text-[13.5px] ${
+      className={`mb-6 animate-fade-up rounded-lg border px-4 py-3 text-[13.5px] ${
         error
           ? "border-[var(--danger-border)] bg-[var(--danger-bg)] text-[var(--danger)]"
           : "border-[var(--border)] bg-[var(--panel-2)] text-[var(--muted)]"
@@ -175,7 +175,7 @@ function Endpoints({ onChanged }) {
         </p>
 
         {preview && (
-          <div className="mt-4 rounded-lg border border-[var(--border)] bg-[var(--raised)] px-4 py-3">
+          <div className="mt-4 animate-fade-up rounded-lg border border-[var(--border)] bg-[var(--raised)] px-4 py-3">
             <div className="mb-2 text-[12.5px] text-[var(--faint)]">
               {preview.length} model{preview.length === 1 ? "" : "s"} on that
               server
@@ -582,11 +582,16 @@ export default function AdminPage({
       sidebarOpen={sidebarOpen}
       onShowSidebar={onShowSidebar}
     >
-      {tab === "endpoints" ? (
-        <Endpoints onChanged={onEndpointsChanged} />
-      ) : (
-        <Users currentUser={user} />
-      )}
+      {/* Keyed on the tab so switching tabs re-runs the entry animation
+          (the panels already remount on tab change — this just makes it
+          visible as a settle rather than a hard cut). */}
+      <div key={tab} className="animate-fade-up">
+        {tab === "endpoints" ? (
+          <Endpoints onChanged={onEndpointsChanged} />
+        ) : (
+          <Users currentUser={user} />
+        )}
+      </div>
     </AdminShell>
   );
 }

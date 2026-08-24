@@ -182,10 +182,28 @@ export async function streamCompletion({
   // guess (and the race) entirely.
   sse(gen, "start", { id: assistant.id, title: conversation.title });
 
+  // A user turn with photos is the upstream's vision format: an array of
+  // content parts (text plus one image_url per photo, base64 data URLs —
+  // exactly what llama-server's CLIP models decode). Text-only turns stay
+  // plain strings, which is cheaper for the common case.
+  const upstreamMessage = (m) =>
+    m.role === "user" && m.images?.length
+      ? {
+          role: "user",
+          content: [
+            ...(m.content ? [{ type: "text", text: m.content }] : []),
+            ...m.images.map((url) => ({
+              type: "image_url",
+              image_url: { url },
+            })),
+          ],
+        }
+      : { role: m.role, content: m.content };
+
   const messages = [];
   if (sampler?.systemPrompt?.trim())
     messages.push({ role: "system", content: sampler.systemPrompt.trim() });
-  for (const m of history) messages.push({ role: m.role, content: m.content });
+  for (const m of history) messages.push(upstreamMessage(m));
 
   const split = createReasoningSplitter();
   let persistAt = Date.now();

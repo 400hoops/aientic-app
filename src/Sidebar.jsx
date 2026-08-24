@@ -120,7 +120,7 @@ export default function Sidebar({
                 onOpen(c.id);
               }
             }}
-            className={`group flex cursor-pointer items-center justify-between gap-1 rounded-lg
+            className={`group flex animate-fade-in cursor-pointer items-center justify-between gap-1 rounded-lg
                         px-2.5 py-[7px] transition-colors outline-none
                         focus-visible:ring-2 focus-visible:ring-[var(--focus)]
               ${c.id === activeId && view === "chat"
@@ -163,15 +163,17 @@ export default function Sidebar({
           title={theme === "dark" ? "Switch to light" : "Switch to dark"}
           className="relative h-[30px] w-[30px] rounded-md text-[var(--muted)] hover:bg-[var(--hover)]"
         >
+          {/* The two icons cross-fade AND rotate out/in around the same axis,
+              so the swap reads as the dial turning rather than a fade. */}
           <IconSun
-            className={`absolute inset-0 m-auto h-[17px] w-[17px] transition-opacity
-                        duration-300 motion-reduce:transition-none
-                        ${theme === "dark" ? "opacity-100" : "opacity-0"}`}
+            className={`absolute inset-0 m-auto h-[17px] w-[17px] transition-[opacity,transform]
+                        duration-300 ease-swift motion-reduce:transition-none
+                        ${theme === "dark" ? "-rotate-90 opacity-0" : "rotate-0 opacity-100"}`}
           />
           <IconMoon
-            className={`absolute inset-0 m-auto h-[17px] w-[17px] transition-opacity
-                        duration-300 motion-reduce:transition-none
-                        ${theme === "dark" ? "opacity-0" : "opacity-100"}`}
+            className={`absolute inset-0 m-auto h-[17px] w-[17px] transition-[opacity,transform]
+                        duration-300 ease-swift motion-reduce:transition-none
+                        ${theme === "dark" ? "rotate-0 opacity-100" : "rotate-90 opacity-0"}`}
           />
         </button>
         <button
