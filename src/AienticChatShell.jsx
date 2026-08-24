@@ -157,6 +157,15 @@ export default function AienticChatShell({
     [models, modelId],
   );
 
+  // Only a model marked as vision-capable can look at photos, so pending
+  // attachments are dropped the moment the active model can't see them —
+  // otherwise they'd be silently attached to a turn a text-only model
+  // ignores.
+  useEffect(() => {
+    if (activeModel?.vision) return;
+    setImages((imgs) => (imgs.length ? [] : imgs));
+  }, [activeModel]);
+
   /* ---------- load ------------------------------------------------------- */
 
   useEffect(() => {
@@ -1082,31 +1091,38 @@ export default function AienticChatShell({
                     status={modelStatus}
                     matchParent
                   />
-                  {/* h-7 w-7 = 28px, the same height as the picker's trigger
-                      (py-1 + its 20px text line), so the pair reads as one
-                      control. Opens the native picker; the accept list is
-                      the first gate, addFiles re-checks every file. */}
-                  <button
-                    onClick={() => fileRef.current?.click()}
-                    disabled={streaming}
-                    title="Attach photos (JPEG, PNG or GIF)"
-                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md
-                               text-[var(--muted)] transition-colors hover:bg-[var(--panel)]
-                               disabled:opacity-50"
-                  >
-                    <IconPlus className="h-[18px] w-[18px]" />
-                  </button>
-                  <input
-                    ref={fileRef}
-                    type="file"
-                    accept="image/jpeg,image/png,image/gif"
-                    multiple
-                    className="hidden"
-                    onChange={(e) => {
-                      addFiles([...e.target.files]);
-                      e.target.value = ""; // allow re-picking the same file
-                    }}
-                  />
+                  {/* Shown only while a vision-capable model is active —
+                      attaching photos to a text-only model would just send
+                      bytes it can't see. h-7 w-7 = 28px, the same height as
+                      the picker's trigger (py-1 + its 20px text line), so
+                      the pair reads as one control. Opens the native picker;
+                      the accept list is the first gate, addFiles re-checks
+                      every file. */}
+                  {activeModel?.vision && (
+                    <>
+                      <button
+                        onClick={() => fileRef.current?.click()}
+                        disabled={streaming}
+                        title="Attach photos (JPEG, PNG or GIF)"
+                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md
+                                   text-[var(--muted)] transition-colors hover:bg-[var(--panel)]
+                                   disabled:opacity-50"
+                      >
+                        <IconPlus className="h-[18px] w-[18px]" />
+                      </button>
+                      <input
+                        ref={fileRef}
+                        type="file"
+                        accept="image/jpeg,image/png,image/gif"
+                        multiple
+                        className="hidden"
+                        onChange={(e) => {
+                          addFiles([...e.target.files]);
+                          e.target.value = ""; // allow re-picking the same file
+                        }}
+                      />
+                    </>
+                  )}
                 </div>
 
                 {streaming ? (

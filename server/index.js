@@ -329,6 +329,7 @@ const publicEndpoint = (e) => ({
   id: e.id,
   label: e.label,
   note: e.note || "",
+  vision: !!e.vision,
 });
 
 const adminEndpoint = (e) => ({
@@ -428,7 +429,7 @@ app.get("/api/admin/endpoints", requireAdmin, (_req, res) =>
 );
 
 app.post("/api/admin/endpoints", requireAdmin, (req, res) => {
-  const { label, note, baseUrl, modelParam, apiKey } = req.body || {};
+  const { label, note, baseUrl, modelParam, apiKey, vision } = req.body || {};
   const base = normaliseBase(baseUrl);
   const problem = baseProblem(base);
   if (problem) return bad(res, 400, problem);
@@ -451,6 +452,7 @@ app.post("/api/admin/endpoints", requireAdmin, (req, res) => {
     note: (note || "").trim(),
     baseUrl: base,
     modelParam: modelParam.trim(),
+    vision: !!vision,
     createdAt: Date.now(),
   };
   db.endpoints.push(endpoint);
@@ -504,6 +506,7 @@ app.post("/api/admin/endpoints/import", requireAdmin, async (req, res) => {
       note: "",
       baseUrl: base,
       modelParam: model.id,
+      vision: false,
       createdAt: Date.now(),
     };
     db.endpoints.push(endpoint);
@@ -517,6 +520,15 @@ app.post("/api/admin/endpoints/import", requireAdmin, async (req, res) => {
     skipped: models.length - added.length,
     endpoints: db.endpoints.map(adminEndpoint),
   });
+});
+
+app.patch("/api/admin/endpoints/:id", requireAdmin, (req, res) => {
+  const endpoint = db.endpoints.find((e) => e.id === req.params.id);
+  if (!endpoint) return bad(res, 404, "Endpoint not found");
+  const { vision } = req.body || {};
+  if (vision !== undefined) endpoint.vision = !!vision;
+  save();
+  ok(res, { endpoint: adminEndpoint(endpoint) });
 });
 
 app.delete("/api/admin/endpoints/:id", requireAdmin, (req, res) => {

@@ -80,6 +80,8 @@ export const importModels = (baseUrl, apiKey) =>
     method: "POST",
     body: { baseUrl, apiKey },
   });
+export const updateEndpoint = (id, patch) =>
+  request(`/admin/endpoints/${id}`, { method: "PATCH", body: patch });
 export const removeEndpoint = (id) =>
   request(`/admin/endpoints/${id}`, { method: "DELETE" });
 

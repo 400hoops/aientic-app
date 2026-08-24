@@ -233,6 +233,15 @@ export async function streamCompletion({
       }),
     });
 
+    // The upstream answered — the silence-before-first-byte window is over,
+    // so the watchdog can no longer fire. Clearing it here (not just in
+    // finally) is what keeps a healthy answer that legitimately takes longer
+    // than the whole window to stream from being cut off mid-stream.
+    if (connectTimer) {
+      clearTimeout(connectTimer);
+      connectTimer = null;
+    }
+
     if (!upstream.ok || !upstream.body) {
       const detail = await upstream.text().catch(() => "");
       throw new Error(

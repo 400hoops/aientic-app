@@ -40,7 +40,12 @@ function Endpoints({ onChanged }) {
   const [endpoints, setEndpoints] = useState([]);
   const [baseUrl, setBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
-  const [manual, setManual] = useState({ label: "", note: "", modelParam: "" });
+  const [manual, setManual] = useState({
+    label: "",
+    note: "",
+    modelParam: "",
+    vision: false,
+  });
   const [showManual, setShowManual] = useState(false);
   const [preview, setPreview] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -94,7 +99,7 @@ function Endpoints({ onChanged }) {
   const addManual = () =>
     guard(async () => {
       await api.addEndpoint({ ...manual, baseUrl, apiKey });
-      setManual({ label: "", note: "", modelParam: "" });
+      setManual({ label: "", note: "", modelParam: "", vision: false });
       await load();
       onChanged?.();
       setNotice("Endpoint added.");
@@ -106,6 +111,16 @@ function Endpoints({ onChanged }) {
       const res = await api.removeEndpoint(endpoint.id);
       setEndpoints(res.endpoints);
       onChanged?.();
+    });
+
+  const setVision = (endpoint) =>
+    guard(async () => {
+      const res = await api.updateEndpoint(endpoint.id, {
+        vision: !endpoint.vision,
+      });
+      setEndpoints((eps) =>
+        eps.map((e) => (e.id === res.endpoint.id ? res.endpoint : e))
+      );
     });
 
   return (
@@ -241,6 +256,17 @@ function Endpoints({ onChanged }) {
                   />
                 </div>
               </div>
+              <label className="mt-4 flex cursor-pointer items-center gap-2 text-[13.5px] text-[var(--text-soft)]">
+                <input
+                  type="checkbox"
+                  checked={manual.vision}
+                  onChange={(e) =>
+                    setManual({ ...manual, vision: e.target.checked })
+                  }
+                  className="h-4 w-4 accent-[var(--text)]"
+                />
+                Supports vision (accepts attached images)
+              </label>
               <button
                 onClick={addManual}
                 disabled={
@@ -265,6 +291,7 @@ function Endpoints({ onChanged }) {
               <th className="px-4 py-3 text-left font-medium">Label</th>
               <th className="px-4 py-3 text-left font-medium">Base URL</th>
               <th className="px-4 py-3 text-left font-medium">Model param</th>
+              <th className="px-4 py-3 text-left font-medium">Vision</th>
               <th className="px-4 py-3 text-left font-medium">Key</th>
               <th className="px-4 py-3" />
             </tr>
@@ -273,7 +300,7 @@ function Endpoints({ onChanged }) {
             {endpoints.length === 0 && (
               <tr>
                 <td
-                  colSpan={5}
+                  colSpan={6}
                   className="px-4 py-6 text-center text-[var(--faint)]"
                 >
                   No endpoints yet.
@@ -295,6 +322,23 @@ function Endpoints({ onChanged }) {
                 </td>
                 <td className="px-4 py-3 font-mono text-[12.5px] text-[var(--text-soft)]">
                   {e.modelParam}
+                </td>
+                <td className="px-4 py-3">
+                  <button
+                    onClick={() => setVision(e)}
+                    disabled={busy}
+                    title={
+                      e.vision
+                        ? "Model reads attached images — click to turn off"
+                        : "Model does not read attached images — click to turn on"
+                    }
+                    className={`rounded-md border px-2 py-0.5 text-[12px] transition-colors
+                      ${e.vision
+                        ? "border-[var(--border-strong)] bg-[var(--active)] text-[var(--text)]"
+                        : "border-[var(--border)] text-[var(--faint)] hover:text-[var(--muted)]"}`}
+                  >
+                    {e.vision ? "vision" : "text"}
+                  </button>
                 </td>
                 <td className="px-4 py-3 text-[var(--faint)]">
                   {e.hasKey ? "set" : "—"}
