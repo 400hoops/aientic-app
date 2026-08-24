@@ -309,7 +309,7 @@ export default function App() {
     : conversations;
 
   const sidebar = (
-    <Sidebar
+    <Sidebar brand="Aientic"
       user={user}
       view={effectiveView}
       conversations={visible}

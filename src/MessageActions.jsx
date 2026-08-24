@@ -46,7 +46,7 @@ export default function MessageActions({
                   duration-300 ease-swift
                   ${hidden ? "pointer-events-none opacity-0" : "opacity-100"}`}
     >
-      <span className="mr-1 tabular-nums">{relativeTime(timestamp)}</span>
+      {timestamp && (<span className="mr-1 tabular-nums">{relativeTime(timestamp)}</span>)}
       {onRegenerate && button("Regenerate", IconRefresh, onRegenerate)}
       {onEdit && button("Edit", IconPencil, onEdit)}
       {onCopy && button(copied ? "Copied" : "Copy", copied ? IconCheck : IconCopy, copy)}

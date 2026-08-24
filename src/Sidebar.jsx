@@ -18,7 +18,7 @@ import { initial } from "./format.js";
  * On phones it slides over the conversation instead of pushing it — see the
  * overlay in App.
  */
-export default function Sidebar({
+export default function Sidebar({ brand = "Aientic", user, view, conversations, activeId, filter, theme, onFilter, onNewChat, onOpen, onDelete, onNavigate, onToggleTheme, onSignOut, onHide }) {
   user,
   view,
   conversations,
@@ -53,7 +53,7 @@ export default function Sidebar({
     <aside className="flex h-full w-[268px] shrink-0 flex-col border-r border-[var(--border)]
                       bg-[var(--panel)] max-md:w-full">
       <div className="flex h-14 shrink-0 items-center justify-between border-b border-[var(--border)] px-4">
-        <Wordmark />
+        <Wordmark text={brand} />
         <button
           onClick={onHide}
           title="Hide sidebar"
