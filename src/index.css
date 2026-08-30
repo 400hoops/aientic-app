@@ -208,8 +208,6 @@
   }
 }
 
-
-
 /* The document itself never scrolls — every scrollable region in this app
    (message list, sidebar) owns its own overflow. Letting the document scroll
    is what put the header off-screen: measured on-device, #root sat at
@@ -351,8 +349,8 @@ th,
   }
 }
 
-/* Range inputs: a flat track and a grey thumb, matching the sampler
-   screenshots. */
+/* Range inputs: a flat track and a grey thumb, filled to the current
+   value via --fill (set inline by the sampler's sliders). */
 input[type="range"] {
   -webkit-appearance: none;
   appearance: none;

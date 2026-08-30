@@ -1,5 +1,5 @@
 /**
- * Small non-secret preferences (last model used, sidebar state).
+ * Small non-secret preferences — currently just the last model used.
  *
  * The session itself is an httpOnly cookie the browser can't read — that's
  * the point of it. Nothing here is trusted by the server.

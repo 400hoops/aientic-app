@@ -309,7 +309,7 @@ export default function App() {
     : conversations;
 
   const sidebar = (
-    <Sidebar brand="Aientic"
+    <Sidebar
       user={user}
       view={effectiveView}
       conversations={visible}
@@ -425,7 +425,6 @@ export default function App() {
           onBack={() => setView("chat")}
         />
       )}
-
     </div>
   );
 }

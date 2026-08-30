@@ -111,6 +111,7 @@ function Lightbox({ src, onClose }) {
   return createPortal(
     <div
       role="dialog"
+      aria-modal="true"
       aria-label="Image preview"
       onClick={onClose}
       className="fixed inset-0 z-50 flex animate-fade-in touch-none select-none

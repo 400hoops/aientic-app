@@ -568,6 +568,7 @@ export default function AienticChatShell({
         // name+size+lastModified: stable enough to key the preview, unique
         // enough that re-picking a same-named file still adds a second slot.
         id: `${file.name}-${file.size}-${file.lastModified}-${file.type}`,
+        name: file.name,
         url: await fileToDataUrl(file),
       });
     }
@@ -611,12 +612,13 @@ export default function AienticChatShell({
         }
       }
 
-    // The header's title used to be guessed here client-side, mirroring
-    // the server's rename-on-first-message logic — but a guess computed
-    // independently of the server can race with a stale refetch and lose.
-    // The stream's own "start" event now carries the server's authoritative
-    // title instead (see streamHandlers), which arrives moments after this
-    // and can't be wrong, so there's nothing to compute here any more.
+      // The header's title used to be guessed here client-side, mirroring
+      // the server's rename-on-first-message logic — but a guess computed
+      // independently of the server can race with a stale refetch and lose.
+      // The stream's own "start" event now carries the server's
+      // authoritative title instead (see streamHandlers), which arrives
+      // moments after this and can't be wrong, so there's nothing left to
+      // compute here.
       setConversation((prev) =>
         prev
           ? {
@@ -766,8 +768,14 @@ export default function AienticChatShell({
 
   return (
     <div className="flex min-w-0 animate-fade-in flex-1 flex-col">
-      <header style={{ transform: "translateZ(0)" }}
-      className="sticky top-0 z-10 bg-[var(--bg)] flex h-14 shrink-0 items-center gap-3 border-b border-[var(--border)] px-4">
+      {/* translateZ(0) promotes the bar to its own compositor layer. iOS
+          Safari otherwise leaves it behind by a frame — smearing the border
+          — while the composer's keyboard-driven resize repaints beneath it. */}
+      <header
+        style={{ transform: "translateZ(0)" }}
+        className="sticky top-0 z-10 flex h-14 shrink-0 items-center gap-3
+                   border-b border-[var(--border)] bg-[var(--bg)] px-4"
+      >
         {!sidebarOpen && (
           <button
             onClick={onShowSidebar}
@@ -814,13 +822,11 @@ export default function AienticChatShell({
         <div
           ref={setScrollRef}
           onScroll={onScroll}
-          // overflow-y-scroll, not -auto: the gutter has to exist before
-          // content ever needs it. With -auto, the moment a reply (or an
-          // opened reasoning panel) crosses the viewport height, a scrollbar
-          // appears and the centred column beside it visibly steps sideways.
-          // scrollbar-gutter (index.css) covers this in engines that support
-          // it; keeping the track always present covers Safari, which still
-          // doesn't.
+          // overflow-y-scroll, not -auto: scrollbars are hidden outright
+          // (index.css), so this reserves no gutter and draws nothing — it
+          // simply keeps the scroll container's behaviour identical either
+          // side of the moment a reply (or an opened reasoning panel) grows
+          // past the viewport, instead of switching between two states.
           className="h-full overflow-y-scroll"
         >
           <div
@@ -916,7 +922,12 @@ export default function AienticChatShell({
                           {m.images?.length > 0 && (
                             <span className="mb-1.5 flex flex-wrap gap-1.5">
                               {m.images.map((url, j) => (
-                                <PreviewableImage key={`${m.id}-${j}`} src={url} className="max-h-32 max-w-[220px] rounded-lg object-cover" />
+                                <PreviewableImage
+                                  key={`${m.id}-${j}`}
+                                  src={url}
+                                  alt={`Attached image ${j + 1}`}
+                                  className="max-h-32 max-w-[220px] rounded-lg object-cover"
+                                />
                               ))}
                             </span>
                           )}
@@ -1050,11 +1061,11 @@ export default function AienticChatShell({
 
               {images.length > 0 && (
                 <div className="flex flex-wrap items-center gap-2 px-1 pt-2">
-                  {images.map((img) => (
+                  {images.map((img, i) => (
                     <div key={img.id} className="relative animate-scale-in">
                       <PreviewableImage
                         src={img.url}
-                        alt={img.id}
+                        alt={img.name || `Attached image ${i + 1}`}
                         className="h-14 w-14 rounded-lg object-cover"
                       />
                       <button
@@ -1068,13 +1079,16 @@ export default function AienticChatShell({
                       </button>
                     </div>
                   ))}
-                  {imgError && (
-                    <span className="text-[12px] text-[var(--danger)]">{imgError}</span>
-                  )}
                 </div>
               )}
-              {imgError && images.length === 0 && (
-                <p className="px-1 pt-1.5 text-[12px] text-[var(--danger)]">{imgError}</p>
+
+              {/* One place, whether or not any thumbnails made it through:
+                  a rejected file (wrong type, too large, over the limit)
+                  can arrive alongside accepted ones or entirely alone. */}
+              {imgError && (
+                <p className="px-1 pt-1.5 text-[12px] text-[var(--danger)]">
+                  {imgError}
+                </p>
               )}
 
               <div className="flex items-center justify-between pt-1">

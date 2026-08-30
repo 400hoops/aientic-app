@@ -123,8 +123,14 @@ export default function SamplerPage({
 
   return (
     <div className="flex min-w-0 animate-fade-in flex-1 flex-col">
-      <header style={{ transform: "translateZ(0)" }}
-      className="sticky top-0 z-10 bg-[var(--bg)] flex h-14 shrink-0 items-center gap-3 border-b border-[var(--border)] px-4">
+      {/* translateZ(0) promotes the bar to its own compositor layer. iOS
+          Safari otherwise leaves it behind by a frame — smearing the border
+          — while the composer's keyboard-driven resize repaints beneath it. */}
+      <header
+        style={{ transform: "translateZ(0)" }}
+        className="sticky top-0 z-10 flex h-14 shrink-0 items-center gap-3
+                   border-b border-[var(--border)] bg-[var(--bg)] px-4"
+      >
         {!sidebarOpen && (
           <button
             onClick={onShowSidebar}
