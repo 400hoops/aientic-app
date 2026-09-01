@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   IconDownload,
@@ -10,6 +10,7 @@ import {
   IconShield,
   IconSliders,
   IconSun,
+  IconChevronDown,
   IconTrash,
   IconUpload,
 } from "./Icons.jsx";
@@ -22,6 +23,23 @@ import { initial } from "./format.js";
  * On phones it slides over the conversation instead of pushing it — see the
  * overlay in App.
  */
+/**
+ * The matched words, in bold, inside the server's snippet. Split rather
+ * than replaced: the text is user content and never becomes markup.
+ */
+function highlight(text, query) {
+  const q = query.trim();
+  if (!q) return text;
+  const parts = text.split(new RegExp(`(${q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "ig"));
+  return parts.map((part, i) =>
+    part.toLowerCase() === q.toLowerCase() ? (
+      <b key={i} className="font-medium text-[var(--text)]">{part}</b>
+    ) : (
+      part
+    )
+  );
+}
+
 export default function Sidebar({
   user,
   view,
@@ -43,6 +61,40 @@ export default function Sidebar({
   // "Importing…" while the upload is in flight, then the result — a Claude
   // export can be tens of megabytes, so the button has to say something.
   const [status, setStatus] = useState(null);
+  // The account menu behind the name in the footer.
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef(null);
+
+  // Click anywhere else, or press Escape, and it closes — the two ways
+  // every menu on the web is dismissed.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDown = (e) => {
+      if (!menuRef.current?.contains(e.target)) setMenuOpen(false);
+    };
+    const onKey = (e) => e.key === "Escape" && setMenuOpen(false);
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [menuOpen]);
+
+  const menuItem = (label, Glyph, onClick, extra = null) => (
+    <button
+      onClick={() => {
+        setMenuOpen(false);
+        onClick();
+      }}
+      className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left
+                 text-[length:var(--fs-sm2)] text-[var(--text-soft)] hover:bg-[var(--hover)]"
+    >
+      <Glyph className="h-[16px] w-[16px] shrink-0" />
+      <span className="flex-1 truncate">{label}</span>
+      {extra}
+    </button>
+  );
 
   const chooseFile = async (event) => {
     const file = event.target.files?.[0];
@@ -146,7 +198,7 @@ export default function Sidebar({
 
       <div className="min-h-0 flex-1 space-y-1 overflow-y-scroll px-2 pb-2">
         <div className="ui-tight px-2.5 pb-1.5 pt-3 text-[length:var(--fs-xs)] text-[var(--muted)]">
-          Recents
+          {filter.trim() ? "Results" : "Recents"}
         </div>
 
         {conversations.length === 0 && (
@@ -171,15 +223,23 @@ export default function Sidebar({
                 onOpen(c.id);
               }
             }}
-            className={`group flex animate-fade-in cursor-pointer items-center justify-between gap-1 rounded-lg
+            className={`group flex animate-fade-in cursor-pointer items-start justify-between gap-1 rounded-lg
                         px-2.5 py-[7px] transition-colors outline-none
                         focus-visible:ring-2 focus-visible:ring-[var(--focus)]
               ${c.id === activeId && view === "chat"
                 ? "bg-[var(--active)]"
                 : "hover:bg-[var(--hover)]"}`}
           >
-            <span className="truncate text-[length:var(--fs-sm2)] text-[var(--text-soft)]">
-              {c.title}
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-[length:var(--fs-sm2)] text-[var(--text-soft)]">
+                {c.title}
+              </span>
+              {/* Why this chat matched, when it wasn't the title. */}
+              {c.snippet && (
+                <span className="mt-0.5 block truncate text-[length:var(--fs-xs)] text-[var(--muted)]">
+                  {highlight(c.snippet, filter)}
+                </span>
+              )}
             </span>
             <a
               href={`/api/conversations/${c.id}/export?format=md`}
@@ -209,41 +269,53 @@ export default function Sidebar({
         ))}
       </div>
 
-      <div className="flex items-center gap-2.5 border-t border-[var(--border)] px-4 py-3">
-        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[var(--text)]
-                        text-[13px] font-medium text-[var(--bg)]">
-          {initial(user.username)}
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-[length:var(--fs-sm2)] leading-tight">{user.username}</div>
-        </div>
-        {/* Both icons stay mounted and cross-fade by opacity — conditionally
-            rendering one or the other would swap the DOM node instantly,
-            with nothing to animate between. */}
+      <div ref={menuRef} className="relative border-t border-[var(--border)] px-3 py-3">
+        {menuOpen && (
+          // Anchored above the row it belongs to, since the row is already
+          // at the bottom of the screen.
+          <div
+            role="menu"
+            className="absolute bottom-full left-3 right-3 mb-2 animate-scale-in rounded-xl border
+                       border-[var(--border)] bg-[var(--raised)] p-1.5
+                       shadow-[0_8px_30px_rgba(0,0,0,0.12)]"
+          >
+            {user.role === "admin" &&
+              menuItem("Sampler", IconSliders, () => onNavigate("sampler"))}
+            {user.role === "admin" &&
+              menuItem("Admin", IconShield, () => onNavigate("admin"))}
+            {user.role === "admin" && (
+              <div className="my-1.5 h-px bg-[var(--border)]" />
+            )}
+            {menuItem(
+              theme === "dark" ? "Light mode" : "Dark mode",
+              theme === "dark" ? IconSun : IconMoon,
+              onToggleTheme
+            )}
+            <div className="my-1.5 h-px bg-[var(--border)]" />
+            {menuItem("Sign out", IconLogOut, onSignOut)}
+          </div>
+        )}
+
         <button
-          onClick={onToggleTheme}
-          title={theme === "dark" ? "Switch to light" : "Switch to dark"}
-          className="relative h-[30px] w-[30px] rounded-md text-[var(--muted)] hover:bg-[var(--hover)]"
+          onClick={() => setMenuOpen((open) => !open)}
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          className={`flex w-full items-center gap-2.5 rounded-lg px-1.5 py-1 transition-colors
+                      hover:bg-[var(--hover)] ${menuOpen ? "bg-[var(--hover)]" : ""}`}
         >
-          {/* The two icons cross-fade AND rotate out/in around the same axis,
-              so the swap reads as the dial turning rather than a fade. */}
-          <IconSun
-            className={`absolute inset-0 m-auto h-[17px] w-[17px] transition-[opacity,transform]
-                        duration-300 ease-swift motion-reduce:transition-none
-                        ${theme === "dark" ? "-rotate-90 opacity-0" : "rotate-0 opacity-100"}`}
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--text)]
+                          text-[13px] font-medium text-[var(--bg)]">
+            {initial(user.username)}
+          </div>
+          <div className="min-w-0 flex-1 text-left">
+            <div className="truncate text-[length:var(--fs-sm2)] leading-tight">
+              {user.username}
+            </div>
+          </div>
+          <IconChevronDown
+            className={`h-[15px] w-[15px] shrink-0 text-[var(--muted)] transition-transform
+                        duration-200 ${menuOpen ? "rotate-180" : ""}`}
           />
-          <IconMoon
-            className={`absolute inset-0 m-auto h-[17px] w-[17px] transition-[opacity,transform]
-                        duration-300 ease-swift motion-reduce:transition-none
-                        ${theme === "dark" ? "rotate-0 opacity-100" : "rotate-90 opacity-0"}`}
-          />
-        </button>
-        <button
-          onClick={onSignOut}
-          title="Sign out"
-          className="rounded-md p-1.5 text-[var(--muted)] hover:bg-[var(--hover)]"
-        >
-          <IconLogOut className="h-[17px] w-[17px]" />
         </button>
       </div>
     </aside>

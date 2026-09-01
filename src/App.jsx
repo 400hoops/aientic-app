@@ -71,6 +71,8 @@ export default function App() {
   const [modelStatus, setModelStatus] = useState({});
   const [modelId, setModelId] = useState(() => readPref("aientic:model"));
   const [conversations, setConversations] = useState([]);
+  // Search results, which carry a snippet the plain list doesn't have.
+  const [matches, setMatches] = useState([]);
   const [activeId, setActiveId] = useState(initialRoute.activeId);
 
   const user = session?.user ?? null;
@@ -129,6 +131,31 @@ export default function App() {
         .catch(() => {}),
     []
   );
+
+  /**
+   * Search runs on the server, over message text as well as titles — the
+   * transcripts never all live in the browser, and the store is a scan away
+   * from answering this anyway. Debounced, and each keystroke aborts the
+   * request the last one left in flight.
+   */
+  useEffect(() => {
+    const q = filter.trim();
+    if (!q) {
+      setMatches([]);
+      return;
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      api
+        .searchConversations(q, controller.signal)
+        .then((res) => setMatches(res.conversations))
+        .catch(() => {});
+    }, 160);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [filter]);
 
   /**
    * A Claude data export, uploaded from the sidebar or dropped on the
@@ -313,11 +340,7 @@ export default function App() {
       ? "chat"
       : view;
 
-  const visible = filter.trim()
-    ? conversations.filter((c) =>
-        c.title.toLowerCase().includes(filter.trim().toLowerCase())
-      )
-    : conversations;
+  const visible = filter.trim() ? matches : conversations;
 
   const sidebar = (
     <Sidebar

@@ -49,6 +49,9 @@ export const getModelStatus = () => request("/models/status");
 
 export const listConversations = () => request("/conversations");
 export const getConversation = (id) => request(`/conversations/${id}`);
+/** Titles and message contents, with the line each hit matched on. */
+export const searchConversations = (q, signal) =>
+  request(`/conversations/search?q=${encodeURIComponent(q)}`, { signal });
 export const createConversation = (endpointId) =>
   request("/conversations", { method: "POST", body: { endpointId } });
 export const renameConversation = (id, title) =>

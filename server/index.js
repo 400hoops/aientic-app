@@ -714,6 +714,66 @@ app.get("/api/conversations", requireAuth, (req, res) =>
   })
 );
 
+/**
+ * Search your own history — titles *and* what was actually said.
+ *
+ * Everything is already in memory, so this is a plain scan: a few hundred
+ * conversations cost less than the round trip that carried the query. Each
+ * hit comes back with the line it matched, so the sidebar can show why.
+ */
+// Lopsided on purpose: the sidebar is narrow and truncates the tail, so the
+// match has to sit near the front of the snippet to survive the ellipsis.
+const SNIPPET_BEFORE = 16;
+const SNIPPET_AFTER = 120;
+
+const snippetAround = (text, at, needle) => {
+  const from = Math.max(0, at - SNIPPET_BEFORE);
+  const to = Math.min(text.length, at + needle.length + SNIPPET_AFTER);
+  return (
+    (from > 0 ? "…" : "") +
+    text.slice(from, to).replace(/\s+/g, " ").trim() +
+    (to < text.length ? "…" : "")
+  );
+};
+
+app.get("/api/conversations/search", requireAuth, (req, res) => {
+  const q = String(req.query.q || "").trim().toLowerCase();
+  if (!q) return ok(res, { conversations: [] });
+
+  const results = [];
+  for (const convo of db.conversations) {
+    if (convo.userId !== req.user.id) continue;
+
+    const inTitle = convo.title.toLowerCase().includes(q);
+    let hit = null;
+    let matches = 0;
+    for (const m of convo.messages) {
+      const text = m.content || "";
+      const at = text.toLowerCase().indexOf(q);
+      if (at === -1) continue;
+      matches++;
+      if (!hit)
+        hit = {
+          messageId: m.id,
+          role: m.role,
+          snippet: snippetAround(text, at, q),
+        };
+    }
+    if (!inTitle && !hit) continue;
+    results.push({ ...summary(convo), matches, ...(hit || {}) });
+  }
+
+  // Title matches first — you usually mean the chat you named — then the
+  // most recently touched.
+  results.sort((a, b) => {
+    const aTitle = a.title.toLowerCase().includes(q);
+    const bTitle = b.title.toLowerCase().includes(q);
+    if (aTitle !== bTitle) return aTitle ? -1 : 1;
+    return b.updatedAt - a.updatedAt;
+  });
+  ok(res, { conversations: results.slice(0, 50) });
+});
+
 app.get("/api/conversations/:id", requireAuth, (req, res) => {
   const convo = owned(req);
   if (!convo) return bad(res, 404, "No such conversation");
@@ -807,7 +867,17 @@ app.patch("/api/conversations/:id/messages/:messageId", requireAuth, (req, res) 
 app.delete("/api/conversations/:id/messages/:messageId", requireAuth, (req, res) => {
   const convo = owned(req);
   if (!convo) return bad(res, 404, "No such conversation");
-  convo.messages = convo.messages.filter((m) => m.id !== req.params.messageId);
+
+  const at = convo.messages.findIndex((m) => m.id === req.params.messageId);
+  if (at === -1) return bad(res, 404, "No such message");
+
+  // A question and the answers it produced are one exchange: deleting the
+  // question on its own used to leave a reply hanging under whatever came
+  // before it, which then went back to the model as history.
+  let end = at + 1;
+  if (convo.messages[at].role === "user")
+    while (convo.messages[end]?.role === "assistant") end++;
+  convo.messages.splice(at, end - at);
   convo.updatedAt = Date.now();
   save();
   touchConversation(convo);

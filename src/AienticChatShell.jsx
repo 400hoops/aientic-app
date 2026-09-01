@@ -34,6 +34,9 @@ const ATTACH_TYPES = ["image/jpeg", "image/png", "image/gif"];
 const MAX_ATTACHMENTS = 4;
 const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
 
+// Breathing room above a question pinned to the top of the viewport.
+const TOP_GAP = 24;
+
 const fileToDataUrl = (file) =>
   new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -138,6 +141,9 @@ export default function AienticChatShell({
   // would fire once more with the stale value and yank the view back to the
   // bottom — which is what made scrolling up mid-answer impossible.
   const followRef = useRef(true);
+  // True from a send until the reader scrolls away: the view holds the
+  // question at the top instead of chasing the answer's tail.
+  const pinnedRef = useRef(false);
   const taRef = useRef(null);
   const idRef = useRef(conversationId);
   // The conversation this component is already streaming itself. Creating a
@@ -271,7 +277,26 @@ export default function AienticChatShell({
     const el = scrollRef.current;
     if (!el) return;
     followRef.current = true;
+    pinnedRef.current = false; // asking for the bottom means you want the bottom
     el.scrollTo({ top: el.scrollHeight, behavior });
+  }, []);
+
+  /**
+   * Put the question you just asked at the top of the viewport, and leave
+   * it there: while pinned, nothing auto-scrolls. The answer grows into the
+   * space below and, once it outgrows the screen, keeps going past the
+   * bottom edge — reading on is a scroll you make yourself.
+   */
+  const pinAnchorToTop = useCallback((behavior = "auto") => {
+    const el = scrollRef.current;
+    const anchor = anchorRef.current;
+    if (!el || !anchor) return;
+    const delta =
+      anchor.getBoundingClientRect().top -
+      el.getBoundingClientRect().top -
+      TOP_GAP;
+    if (Math.abs(delta) < 1) return;
+    el.scrollTo({ top: el.scrollTop + delta, behavior });
   }, []);
 
   // Distance from the end that still counts as "there". The button uses the
@@ -315,6 +340,7 @@ export default function AienticChatShell({
 
     const breakAway = () => {
       followRef.current = false;
+      pinnedRef.current = false;
     };
 
     const onWheel = (e) => e.deltaY < 0 && breakAway();
@@ -364,17 +390,30 @@ export default function AienticChatShell({
   useEffect(() => {
     const firstSettle = settledConvoRef.current !== conversation?.id;
     settledConvoRef.current = conversation?.id ?? null;
-    scrollToBottom(firstSettle ? "auto" : "smooth");
-  }, [messages.length, conversation?.id, scrollToBottom]);
+    if (firstSettle) {
+      // Opening a conversation lands at its end, instantly — animating that
+      // made every refresh visibly scroll top-to-bottom.
+      pinnedRef.current = false;
+      scrollToBottom("auto");
+      return;
+    }
+    // A turn added to a conversation already on screen: pin its question.
+    followRef.current = true;
+    pinnedRef.current = true;
+    pinAnchorToTop("smooth");
+  }, [messages.length, conversation?.id, scrollToBottom, pinAnchorToTop]);
 
   const tail = messages[messages.length - 1];
   useEffect(() => {
     if (!streaming || !followRef.current) return;
+    // Pinned: the question stays where it is and the answer fills in under
+    // it. Only a re-align, in case something above it changed height.
+    if (pinnedRef.current) return pinAnchorToTop("auto");
     const el = scrollRef.current;
     // Assigning scrollTop, not scrollTo({behavior:"auto"}): a smooth scroll
     // still in flight from the button would otherwise keep overriding this.
     if (el) el.scrollTop = el.scrollHeight;
-  }, [tail?.content, tail?.reasoning, streaming]);
+  }, [tail?.content, tail?.reasoning, streaming, pinAnchorToTop]);
 
   /**
    * Push the question you just asked to the top of the screen.
@@ -386,7 +425,6 @@ export default function AienticChatShell({
    * gets this for free. As the answer grows the reserve shrinks, so a long
    * reply scrolls the question up and off exactly as it always did.
    */
-  const TOP_GAP = 24; // breathing room above the pinned question
   useLayoutEffect(() => {
     const el = scrollRef.current;
     const content = contentRef.current;
@@ -411,9 +449,10 @@ export default function AienticChatShell({
   // Applying the spacer moves the bottom; if the view was following it,
   // follow it to the new one.
   useEffect(() => {
+    if (pinnedRef.current) return pinAnchorToTop("auto");
     const el = scrollRef.current;
     if (el && followRef.current) el.scrollTo({ top: el.scrollHeight });
-  }, [tailSpace]);
+  }, [tailSpace, pinAnchorToTop]);
 
   // The composer floats over the messages; composerH positions the
   // scroll-to-bottom button above it. A callback ref, not useRef + a []
