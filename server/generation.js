@@ -275,6 +275,13 @@ export async function streamCompletion({
         timeZone: clientTimeZone,
       })
     );
+  // Skills attached to this chat, plus any the user marked always-on.
+  const skills = user ? db.skills?.[user.id] || [] : [];
+  const attached = new Set(conversation.skillIds || []);
+  for (const skill of skills)
+    if (skill.always || attached.has(skill.id))
+      system.push(`# ${skill.name}\n\n${skill.instructions}`);
+
   const memories = user ? db.memories?.[user.id] || [] : [];
   if (memories.length)
     system.push(

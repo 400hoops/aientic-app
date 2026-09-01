@@ -306,6 +306,17 @@ export default function App() {
     closeOnPhone();
   };
 
+  const renameConversation = async (convo) => {
+    const title = window.prompt("Rename chat", convo.title);
+    if (title === null) return;
+    const next = title.trim();
+    if (!next || next === convo.title) return;
+    setConversations((prev) =>
+      prev.map((c) => (c.id === convo.id ? { ...c, title: next } : c))
+    );
+    await api.renameConversation(convo.id, next).catch(() => refreshConversations());
+  };
+
   const removeConversation = async (id) => {
     await api.deleteConversation(id).catch(() => {});
     setConversations((prev) => prev.filter((c) => c.id !== id));
@@ -358,6 +369,7 @@ export default function App() {
       onOpenSettings={() => setSettingsOpen(true)}
       onOpen={openChat}
       onDelete={removeConversation}
+      onRename={renameConversation}
       onNavigate={navigate}
       onToggleTheme={onToggleTheme}
       onSignOut={signOut}

@@ -721,6 +721,7 @@ app.delete("/api/admin/users/:id", requireAdmin, (req, res) => {
     if (c.userId === removed.id) removeConversationFiles(c.id);
   db.conversations = db.conversations.filter((c) => c.userId !== removed.id);
   delete db.memories[removed.id];
+  delete db.skills[removed.id];
   for (const [token, session] of Object.entries(db.sessions))
     if (session.userId === removed.id) delete db.sessions[token];
   save();
@@ -733,6 +734,7 @@ const summary = (c) => ({
   id: c.id,
   title: c.title,
   endpointId: c.endpointId,
+  skillIds: c.skillIds || [],
   createdAt: c.createdAt,
   updatedAt: c.updatedAt,
 });
@@ -833,6 +835,7 @@ app.post("/api/conversations", requireAuth, (req, res) => {
     endpointId: endpointId || db.endpoints[0]?.id || null,
     createdAt: Date.now(),
     updatedAt: Date.now(),
+    skillIds: [],
     messages: [],
   };
   db.conversations.push(convo);
@@ -980,6 +983,90 @@ app.delete("/api/memories/:id", requireAuth, (req, res) => {
   ok(res, { memories: db.memories[req.user.id] });
 });
 
+/* ---------- skills -------------------------------------------------------- */
+
+/**
+ * A skill is a named block of instructions you can hand a chat.
+ *
+ * The same idea as memory, scoped differently: memory is always on and
+ * about you; a skill is about a job ("Rewrite in my email voice", "Answer
+ * as a code reviewer") and applies to the conversations you attach it to.
+ * One marked `always` is simply attached to every chat without asking.
+ *
+ * There is no tool-calling here and none is implied — a skill is prompt
+ * text, and the model does with it what a system turn does.
+ */
+const MAX_SKILLS = 50;
+const skillsFor = (userId) => (db.skills[userId] ||= []);
+
+const skillProblem = (name, instructions) => {
+  if (!name?.trim()) return "A skill needs a name";
+  if (tooLong(name, MAX_LEN.label)) return "That name is too long";
+  if (!instructions?.trim()) return "A skill needs instructions";
+  if (tooLong(instructions, MAX_LEN.systemPrompt))
+    return `Instructions must be at most ${MAX_LEN.systemPrompt} characters`;
+  return null;
+};
+
+app.get("/api/skills", requireAuth, (req, res) =>
+  ok(res, { skills: skillsFor(req.user.id) })
+);
+
+app.post("/api/skills", requireAuth, (req, res) => {
+  const { name, description, instructions, always } = req.body || {};
+  const problem = skillProblem(name, instructions);
+  if (problem) return bad(res, 400, problem);
+
+  const skills = skillsFor(req.user.id);
+  if (skills.length >= MAX_SKILLS)
+    return bad(res, 400, `That's the ${MAX_SKILLS}-skill limit — delete one first`);
+
+  skills.push({
+    id: uid(),
+    name: name.trim(),
+    description: (description || "").trim().slice(0, MAX_LEN.note),
+    instructions: instructions.trim(),
+    always: always === true,
+    createdAt: Date.now(),
+  });
+  save();
+  ok(res, { skills });
+});
+
+app.patch("/api/skills/:id", requireAuth, (req, res) => {
+  const skills = skillsFor(req.user.id);
+  const skill = skills.find((s) => s.id === req.params.id);
+  if (!skill) return bad(res, 404, "No such skill");
+
+  const { name, description, instructions, always } = req.body || {};
+  const nextName = name === undefined ? skill.name : name;
+  const nextInstructions =
+    instructions === undefined ? skill.instructions : instructions;
+  const problem = skillProblem(nextName, nextInstructions);
+  if (problem) return bad(res, 400, problem);
+
+  skill.name = nextName.trim();
+  skill.instructions = nextInstructions.trim();
+  if (description !== undefined)
+    skill.description = String(description).trim().slice(0, MAX_LEN.note);
+  if (always !== undefined) skill.always = always === true;
+  skill.updatedAt = Date.now();
+  save();
+  ok(res, { skills });
+});
+
+app.delete("/api/skills/:id", requireAuth, (req, res) => {
+  db.skills[req.user.id] = skillsFor(req.user.id).filter(
+    (s) => s.id !== req.params.id
+  );
+  // A deleted skill can't stay attached to the chats that were using it.
+  for (const convo of db.conversations)
+    if (convo.userId === req.user.id && convo.skillIds?.length)
+      convo.skillIds = convo.skillIds.filter((id) => id !== req.params.id);
+  save();
+  ok(res, { skills: db.skills[req.user.id] });
+});
+
 /* ---------- import / export ---------------------------------------------- */
 
 /**
@@ -1074,7 +1161,13 @@ app.post("/api/conversations/:id/stream", requireAuth, async (req, res) => {
   if (isGenerating(convo.id))
     return bad(res, 409, "That conversation is already generating");
 
-  const { content, endpointId, regenerate, timeZone } = req.body || {};
+  const { content, endpointId, regenerate, timeZone, skillIds } = req.body || {};
+  // Skills stay attached to the conversation once chosen, so a follow-up
+  // question keeps the same instructions without re-picking them.
+  if (Array.isArray(skillIds)) {
+    const mine = new Set(skillsFor(req.user.id).map((s) => s.id));
+    convo.skillIds = skillIds.filter((id) => mine.has(id)).slice(0, MAX_SKILLS);
+  }
   const images = sanitizeImages(req.body?.images);
   // The browser's IANA timezone, so {{CURRENT_*}} tokens resolve to where
   // the user is, not where the server runs. Invalid values fall back to

@@ -23,6 +23,7 @@ const EMPTY = {
   samplers: {},
   conversations: [],
   memories: {},     // userId -> [{ id, text, createdAt }]
+  skills: {},       // userId -> [{ id, name, instructions, always }]
 };
 
 export const uid = () =>

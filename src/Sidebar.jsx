@@ -3,6 +3,8 @@ import { useEffect, useRef, useState } from "react";
 import {
   IconDownload,
   IconLogOut,
+  IconMore,
+  IconPencil,
   IconMoon,
   IconPanel,
   IconPlus,
@@ -54,6 +56,7 @@ export default function Sidebar({
   onOpenSettings,
   onOpen,
   onDelete,
+  onRename,
   onNavigate,
   onToggleTheme,
   onSignOut,
@@ -66,6 +69,23 @@ export default function Sidebar({
   // The account menu behind the name in the footer.
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(null);
+  // Which chat row has its "…" menu open, if any.
+  const [rowMenu, setRowMenu] = useState(null);
+  const rowMenuRef = useRef(null);
+
+  useEffect(() => {
+    if (!rowMenu) return;
+    const onDown = (e) => {
+      if (!rowMenuRef.current?.contains(e.target)) setRowMenu(null);
+    };
+    const onKey = (e) => e.key === "Escape" && setRowMenu(null);
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [rowMenu]);
 
   // Click anywhere else, or press Escape, and it closes — the two ways
   // every menu on the web is dismissed.
@@ -243,30 +263,74 @@ export default function Sidebar({
                 </span>
               )}
             </span>
-            <a
-              href={`/api/conversations/${c.id}/export?format=md`}
-              download
-              onClick={(e) => e.stopPropagation()}
-              title="Download as Markdown"
-              className="shrink-0 rounded p-1 text-[var(--faint)] opacity-0 transition outline-none
-                         hover:text-[var(--text)] group-hover:opacity-100
-                         focus-visible:opacity-100 max-md:opacity-100"
+            {/* One "…" instead of a row of icons: the row stays quiet, and
+                there's somewhere to put the next action when there is one. */}
+            <div
+              ref={rowMenu === c.id ? rowMenuRef : null}
+              className="relative shrink-0"
             >
-              <IconDownload className="h-[14px] w-[14px]" />
-            </a>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                if (window.confirm(`Delete “${c.title}”?`)) onDelete(c.id);
-              }}
-              title="Delete chat"
-              className="shrink-0 rounded p-1 text-[var(--faint)] opacity-0 transition outline-none
-                         hover:text-[var(--danger)] group-hover:opacity-100
-                         focus-visible:opacity-100 focus-visible:text-[var(--danger)]
-                         max-md:opacity-100"
-            >
-              <IconTrash className="h-[14px] w-[14px]" />
-            </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setRowMenu(rowMenu === c.id ? null : c.id);
+                }}
+                title="More"
+                aria-haspopup="menu"
+                aria-expanded={rowMenu === c.id}
+                className={`rounded p-1 text-[var(--faint)] transition outline-none
+                            hover:text-[var(--text)] focus-visible:opacity-100
+                            max-md:opacity-100
+                            ${rowMenu === c.id
+                              ? "text-[var(--text)] opacity-100"
+                              : "opacity-0 group-hover:opacity-100"}`}
+              >
+                <IconMore className="h-[15px] w-[15px]" />
+              </button>
+
+              {rowMenu === c.id && (
+                <div
+                  role="menu"
+                  onClick={(e) => e.stopPropagation()}
+                  className="absolute right-0 top-full z-30 mt-1 w-44 animate-scale-in rounded-xl
+                             border border-[var(--border)] bg-[var(--raised)] p-1.5
+                             shadow-[0_8px_30px_rgba(0,0,0,0.12)]"
+                >
+                  <button
+                    onClick={() => {
+                      setRowMenu(null);
+                      onRename(c);
+                    }}
+                    className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left
+                               text-[length:var(--fs-sm2)] hover:bg-[var(--hover)]"
+                  >
+                    <IconPencil className="h-[15px] w-[15px] shrink-0" />
+                    Rename
+                  </button>
+                  <a
+                    href={`/api/conversations/${c.id}/export?format=md`}
+                    download
+                    onClick={() => setRowMenu(null)}
+                    className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2
+                               text-[length:var(--fs-sm2)] hover:bg-[var(--hover)]"
+                  >
+                    <IconDownload className="h-[15px] w-[15px] shrink-0" />
+                    Download
+                  </a>
+                  <div className="my-1.5 h-px bg-[var(--border)]" />
+                  <button
+                    onClick={() => {
+                      setRowMenu(null);
+                      if (window.confirm(`Delete “${c.title}”?`)) onDelete(c.id);
+                    }}
+                    className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left
+                               text-[length:var(--fs-sm2)] text-[var(--danger)] hover:bg-[var(--hover)]"
+                  >
+                    <IconTrash className="h-[15px] w-[15px] shrink-0" />
+                    Delete
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         ))}
       </div>

@@ -16,9 +16,11 @@ import ModelPicker from "./ModelPicker.jsx";
 import {
   IconArrowDown,
   IconArrowUp,
+  IconCheck,
   IconChevronRight,
   IconPanel,
   IconPlus,
+  IconSparkles,
   IconStop,
   IconX,
 } from "./Icons.jsx";
@@ -132,6 +134,45 @@ export default function AienticChatShell({
   // Import progress and its result. Separate from imgError: "Imported 240
   // chats" is good news, and shouldn't be painted in the danger colour.
   const [notice, setNotice] = useState(null);
+
+  /* ---------- skills -----------------------------------------------------
+   *
+   * A skill is a named block of instructions kept in Settings; attaching
+   * one to a chat adds it to that chat's system turn, and it stays attached
+   * for the follow-ups. Skills marked always-on aren't listed as choices —
+   * they apply on their own and there is nothing to pick.
+   */
+  const [skills, setSkills] = useState([]);
+  const [skillIds, setSkillIds] = useState([]);
+  const [skillsOpen, setSkillsOpen] = useState(false);
+  const skillsRef = useRef(null);
+
+  useEffect(() => {
+    api
+      .listSkills()
+      .then((res) => setSkills(res.skills))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!skillsOpen) return;
+    const onDown = (e) => {
+      if (!skillsRef.current?.contains(e.target)) setSkillsOpen(false);
+    };
+    const onKey = (e) => e.key === "Escape" && setSkillsOpen(false);
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [skillsOpen]);
+
+  const optional = skills.filter((s) => !s.always);
+  const toggleSkill = (id) =>
+    setSkillIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
   const fileRef = useRef(null);
 
   const abortRef = useRef(null);
@@ -221,6 +262,7 @@ export default function AienticChatShell({
       .then(({ conversation, generating }) => {
         if (cancelled) return;
         setConversation(conversation);
+        setSkillIds(conversation.skillIds || []);
         if (conversation.endpointId) onModelChange(conversation.endpointId);
 
         // The answer is still being written on the server — a refresh mid-run
@@ -808,11 +850,21 @@ export default function AienticChatShell({
         content: text,
         endpointId: activeModel.id,
         images: attached.map((img) => img.url),
+        skillIds,
       });
     } finally {
       sendingRef.current = false;
     }
-  }, [activeModel, conversation, images, input, onConversationCreated, run, streaming]);
+  }, [
+    activeModel,
+    conversation,
+    images,
+    input,
+    onConversationCreated,
+    run,
+    skillIds,
+    streaming,
+  ]);
 
   const regenerate = useCallback(async () => {
     if (!conversation || streaming || !activeModel || sendingRef.current) return;
@@ -1323,6 +1375,36 @@ export default function AienticChatShell({
                 </p>
               )}
 
+              {/* Skills riding along with this chat. Kept above the controls
+                  row so a long list wraps into the card rather than
+                  squeezing the model picker. */}
+              {skillIds.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1.5 px-1 pt-2">
+                  {skillIds.map((id) => {
+                    const skill = skills.find((s) => s.id === id);
+                    if (!skill) return null;
+                    return (
+                      <span
+                        key={id}
+                        className="flex animate-scale-in items-center gap-1 rounded-full border
+                                   border-[var(--border)] bg-[var(--panel)] py-0.5 pl-2 pr-1
+                                   text-[length:var(--fs-xs)] text-[var(--text-soft)]"
+                      >
+                        <IconSparkles className="h-3 w-3 shrink-0" />
+                        {skill.name}
+                        <button
+                          onClick={() => toggleSkill(id)}
+                          title={`Detach ${skill.name}`}
+                          className="rounded-full p-0.5 text-[var(--muted)] hover:text-[var(--text)]"
+                        >
+                          <IconX className="h-3 w-3" />
+                        </button>
+                      </span>
+                    );
+                  })}
+                </div>
+              )}
+
               <div className="flex items-center justify-between pt-1">
                 <div className="flex min-w-0 items-center gap-1">
                   <ModelPicker
@@ -1334,6 +1416,60 @@ export default function AienticChatShell({
                     status={modelStatus}
                     matchParent
                   />
+                  {/* Skills: the user's own named instruction blocks. Hidden
+                      entirely when none are defined — an empty menu is worse
+                      than no button. */}
+                  {optional.length > 0 && (
+                    <div ref={skillsRef} className="relative">
+                      <button
+                        onClick={() => setSkillsOpen((open) => !open)}
+                        title="Use a skill"
+                        aria-haspopup="menu"
+                        aria-expanded={skillsOpen}
+                        className={`flex h-7 items-center gap-1.5 rounded-lg px-2
+                                    text-[length:var(--fs-sm)] transition-colors
+                                    ${skillIds.length || skillsOpen
+                                      ? "bg-[var(--hover)] text-[var(--text)]"
+                                      : "text-[var(--muted)] hover:bg-[var(--hover)]"}`}
+                      >
+                        <IconSparkles className="h-[17px] w-[17px]" />
+                        {skillIds.length > 0 && skillIds.length}
+                      </button>
+
+                      {skillsOpen && (
+                        <div
+                          role="menu"
+                          className="absolute bottom-full left-0 z-20 mb-2 w-64 animate-scale-in
+                                     rounded-xl border border-[var(--border)] bg-[var(--raised)] p-1.5
+                                     shadow-[0_8px_30px_rgba(0,0,0,0.12)]"
+                        >
+                          {optional.map((skill) => (
+                            <button
+                              key={skill.id}
+                              onClick={() => toggleSkill(skill.id)}
+                              className="flex w-full items-start gap-2 rounded-lg px-2.5 py-2 text-left
+                                         hover:bg-[var(--hover)]"
+                            >
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate text-[length:var(--fs-sm2)]">
+                                  {skill.name}
+                                </span>
+                                {skill.description && (
+                                  <span className="block truncate text-[length:var(--fs-xs)] text-[var(--muted)]">
+                                    {skill.description}
+                                  </span>
+                                )}
+                              </span>
+                              {skillIds.includes(skill.id) && (
+                                <IconCheck className="mt-0.5 h-[15px] w-[15px] shrink-0" />
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {/* Shown only while a vision-capable model is active —
                       attaching photos to a text-only model would just send
                       bytes it can't see. h-7 w-7 = 28px, the same height as

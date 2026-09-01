@@ -98,6 +98,16 @@ export async function importChats(file) {
 export const exportChatUrl = (id, format = "md") =>
   `/api/conversations/${id}/export?format=${format}`;
 
+/* ---------- skills ------------------------------------------------------- */
+
+export const listSkills = () => request("/skills");
+export const addSkill = (skill) =>
+  request("/skills", { method: "POST", body: skill });
+export const editSkill = (id, patch) =>
+  request(`/skills/${id}`, { method: "PATCH", body: patch });
+export const removeSkill = (id) =>
+  request(`/skills/${id}`, { method: "DELETE" });
+
 /* ---------- memory ------------------------------------------------------- */
 
 export const listMemories = () => request("/memories");
@@ -190,7 +200,7 @@ async function readSse(res, handlers) {
 
 export async function streamTurn(
   conversationId,
-  { content, endpointId, regenerate = false, images, signal },
+  { content, endpointId, regenerate = false, images, skillIds, signal },
   handlers = {},
 ) {
   const res = await fetch(`/api/conversations/${conversationId}/stream`, {
@@ -202,6 +212,7 @@ export async function streamTurn(
       endpointId,
       regenerate,
       images,
+      skillIds,
       // Where the user is, so {{CURRENT_WEEKDAY}} / {{CURRENT_DATETIME}} /
       // {{CURRENT_TIMEZONE}} resolve to their clock, not the server's.
       timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,

@@ -13,6 +13,7 @@ import {
   Copy,
   Download,
   LogOut,
+  MoreHorizontal,
   Moon,
   PanelLeft,
   Pencil,
@@ -23,6 +24,7 @@ import {
   Shield,
   SlidersHorizontal,
   Upload,
+  Sparkles,
   Square,
   Sun,
   Trash2,
@@ -44,6 +46,7 @@ export const IconCopy = thin(Copy, "IconCopy");
 export const IconDownload = thin(Download, "IconDownload");
 export const IconLogOut = thin(LogOut, "IconLogOut");
 export const IconMoon = thin(Moon, "IconMoon");
+export const IconMore = thin(MoreHorizontal, "IconMore");
 export const IconPanel = thin(PanelLeft, "IconPanel");
 export const IconPencil = thin(Pencil, "IconPencil");
 export const IconPlus = thin(Plus, "IconPlus");
@@ -52,6 +55,7 @@ export const IconSearch = thin(Search, "IconSearch");
 export const IconSettings = thin(Settings, "IconSettings");
 export const IconShield = thin(Shield, "IconShield");
 export const IconSliders = thin(SlidersHorizontal, "IconSliders");
+export const IconSparkles = thin(Sparkles, "IconSparkles");
 export const IconStop = thin(Square, "IconStop");
 export const IconSun = thin(Sun, "IconSun");
 export const IconUpload = thin(Upload, "IconUpload");

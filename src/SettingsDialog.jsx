@@ -1,7 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 
 import * as api from "./api.js";
-import { IconPlus, IconTrash, IconUpload, IconX } from "./Icons.jsx";
+import {
+  IconPlus,
+  IconSparkles,
+  IconTrash,
+  IconUpload,
+  IconX,
+} from "./Icons.jsx";
 import ModelPicker from "./ModelPicker.jsx";
 
 /**
@@ -62,6 +68,44 @@ export default function SettingsDialog({
     if (!text) return;
     setDraft("");
     await runMemory(() => api.addMemory(text));
+  };
+
+  /* ---------- skills ---------------------------------------------------- */
+
+  const [skills, setSkills] = useState(null);
+  const [skillDraft, setSkillDraft] = useState(null); // null = the form is closed
+  const [skillNote, setSkillNote] = useState(null);
+
+  useEffect(() => {
+    api
+      .listSkills()
+      .then((res) => setSkills(res.skills))
+      .catch((err) => {
+        setSkills([]);
+        setSkillNote({ error: true, text: err.message });
+      });
+  }, []);
+
+  const runSkill = async (call) => {
+    setSkillNote(null);
+    try {
+      const { skills: next } = await call();
+      setSkills(next);
+      return true;
+    } catch (err) {
+      setSkillNote({ error: true, text: err.message });
+      return false;
+    }
+  };
+
+  const saveSkill = async () => {
+    const draft = skillDraft;
+    const ok = await runSkill(() =>
+      draft.id
+        ? api.editSkill(draft.id, draft)
+        : api.addSkill(draft)
+    );
+    if (ok) setSkillDraft(null);
   };
 
   useEffect(() => {
@@ -283,6 +327,124 @@ export default function SettingsDialog({
             </button>
           </div>
           {note(memoryNote)}
+        </Section>
+
+        <Section
+          title="Skills"
+          description="Named instructions you can hand a chat — a voice to write in, a role to answer as. Attach one from the sparkle in the composer; it stays with that chat. Always-on skills apply to every chat without asking."
+        >
+          {skills === null ? (
+            <p className="text-[length:var(--fs-xs)] text-[var(--muted)]">Loading…</p>
+          ) : skills.length === 0 ? (
+            <p className="text-[length:var(--fs-xs)] text-[var(--faint)]">
+              No skills yet.
+            </p>
+          ) : (
+            <ul className="space-y-1.5">
+              {skills.map((skill) => (
+                <li
+                  key={skill.id}
+                  className="group flex items-start gap-2 rounded-lg border border-[var(--border)]
+                             bg-[var(--raised)] px-3 py-2"
+                >
+                  <IconSparkles className="mt-0.5 h-[15px] w-[15px] shrink-0 text-[var(--muted)]" />
+                  <button
+                    onClick={() => setSkillDraft({ ...skill })}
+                    className="min-w-0 flex-1 text-left"
+                  >
+                    <span className="block truncate text-[length:var(--fs-sm2)]">
+                      {skill.name}
+                    </span>
+                    <span className="block truncate text-[length:var(--fs-xs)] text-[var(--muted)]">
+                      {skill.description || skill.instructions}
+                    </span>
+                  </button>
+                  <label
+                    title="Apply to every chat"
+                    className="flex shrink-0 items-center gap-1.5 text-[length:var(--fs-xs)] text-[var(--muted)]"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={!!skill.always}
+                      onChange={(e) =>
+                        runSkill(() =>
+                          api.editSkill(skill.id, { always: e.target.checked })
+                        )
+                      }
+                    />
+                    Always
+                  </label>
+                  <button
+                    onClick={() => runSkill(() => api.removeSkill(skill.id))}
+                    title="Delete this skill"
+                    className="shrink-0 rounded p-1 text-[var(--faint)] transition
+                               hover:text-[var(--danger)] md:opacity-0 md:group-hover:opacity-100"
+                  >
+                    <IconTrash className="h-[14px] w-[14px]" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {skillDraft ? (
+            <div className="space-y-2 rounded-lg border border-[var(--border)] p-3">
+              <input
+                value={skillDraft.name}
+                onChange={(e) =>
+                  setSkillDraft({ ...skillDraft, name: e.target.value })
+                }
+                placeholder="Name — “Email voice”"
+                className={field}
+              />
+              <input
+                value={skillDraft.description || ""}
+                onChange={(e) =>
+                  setSkillDraft({ ...skillDraft, description: e.target.value })
+                }
+                placeholder="One line about when to use it (optional)"
+                className={field}
+              />
+              <textarea
+                value={skillDraft.instructions}
+                onChange={(e) =>
+                  setSkillDraft({ ...skillDraft, instructions: e.target.value })
+                }
+                rows={5}
+                placeholder="Instructions — what the model should do when this skill is on."
+                className={`${field} resize-y`}
+              />
+              <div className="flex justify-end gap-2">
+                <button
+                  onClick={() => setSkillDraft(null)}
+                  className="rounded-lg px-3 py-1.5 text-[length:var(--fs-sm)] text-[var(--muted)]
+                             hover:bg-[var(--hover)]"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={saveSkill}
+                  disabled={!skillDraft.name.trim() || !skillDraft.instructions.trim()}
+                  className="rounded-lg bg-[var(--text)] px-3 py-1.5 text-[length:var(--fs-sm)]
+                             text-[var(--bg)] disabled:opacity-40"
+                >
+                  {skillDraft.id ? "Save skill" : "Add skill"}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              onClick={() =>
+                setSkillDraft({ name: "", description: "", instructions: "" })
+              }
+              className="flex items-center gap-2 rounded-lg border border-[var(--border)] px-3 py-1.5
+                         text-[length:var(--fs-sm)] hover:bg-[var(--hover)]"
+            >
+              <IconPlus className="h-[16px] w-[16px]" />
+              New skill
+            </button>
+          )}
+          {note(skillNote)}
         </Section>
 
         <Section title="Appearance">
