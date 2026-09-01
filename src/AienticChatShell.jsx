@@ -101,7 +101,11 @@ export default function AienticChatShell({
 }) {
   const [conversation, setConversation] = useState(null);
   const [input, setInput] = useState("");
-  const [streaming, setStreaming] = useState(false);
+  // Which conversation this component currently holds a live reader on, or
+  // null. It has to be an id rather than a boolean: a run keeps going when
+  // you switch chats, and a bare boolean painted the caret, hid the message
+  // actions and swapped Send for Stop over whatever chat you switched *to*.
+  const [streamingId, setStreamingId] = useState(null);
   const [error, setError] = useState(null);
   const [editing, setEditing] = useState(null); // { id, text }
   const [titleEditing, setTitleEditing] = useState(false);
@@ -145,6 +149,8 @@ export default function AienticChatShell({
   const [composerH, setComposerH] = useState(96);
 
   const messages = conversation?.messages ?? [];
+  // Only the conversation on screen gets the streaming affordances.
+  const streaming = !!streamingId && streamingId === conversationId;
   // Blank out only when there is genuinely nothing to show yet: a deep link
   // or refresh whose conversation hasn't arrived, or a fresh /new load whose
   // model list is still in flight (otherwise the composer would flash "No
@@ -200,7 +206,7 @@ export default function AienticChatShell({
         // lands here. Follow it from where it got to instead of leaving a
         // half-finished message on screen.
         if (!generating || ownStreamRef.current === conversationId) return;
-        setStreaming(true);
+        setStreamingId(conversationId);
         ownStreamRef.current = conversationId;
         api
           .attachStream(
@@ -214,10 +220,12 @@ export default function AienticChatShell({
           .finally(() => {
             if (ownStreamRef.current === conversationId)
               ownStreamRef.current = null;
-            if (!cancelled) {
-              setStreaming(false);
-              onConversationsChanged();
-            }
+            // Unconditional: when the effect is cleaned up (the user switched
+            // chats) the read aborts and lands here with `cancelled` true.
+            // Skipping the reset there left the flag stuck on forever — a
+            // caret and a Stop button on every chat until a reload.
+            setStreamingId((cur) => (cur === conversationId ? null : cur));
+            if (!cancelled) onConversationsChanged();
           });
       })
       .catch((err) => {
@@ -489,7 +497,7 @@ export default function AienticChatShell({
   const run = useCallback(
     async (convoId, payload) => {
       ownStreamRef.current = convoId;
-      setStreaming(true);
+      setStreamingId(convoId);
       setError(null);
 
       const controller = new AbortController();
@@ -524,7 +532,7 @@ export default function AienticChatShell({
         if (err.name !== "AbortError") {
           setError(err.message);
           setConversation((prev) =>
-            prev
+            prev && prev.id === convoId
               ? {
                   ...prev,
                   messages: prev.messages.filter((m) => m.id !== "pending"),
@@ -534,7 +542,7 @@ export default function AienticChatShell({
         }
       } finally {
         if (ownStreamRef.current === convoId) ownStreamRef.current = null;
-        setStreaming(false);
+        setStreamingId((cur) => (cur === convoId ? null : cur));
         abortRef.current = null;
         onConversationsChanged();
       }
