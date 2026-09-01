@@ -201,7 +201,8 @@
    literal size, but nothing changes for desktop until the mobile media
    query below overrides them. */
 :root {
-  --fs-xs: 11.5px; /* "Recents" label */
+  --fs-label: 10.5px; /* the .ui-label register — section heads, attribution */
+  --fs-xs: 11.5px; /* search hints, snippets */
   --fs-sm: 13px; /* search input, empty-list hint */
   --fs-sm2: 13.5px; /* chat list rows */
   --fs-meta: 12.5px; /* message timestamp row, reasoning toggle + content */
@@ -322,6 +323,25 @@ h3,
 th,
 .ui-tight {
   letter-spacing: -0.01em;
+}
+
+/* The utility register.
+ *
+ * Three voices, and this is the third: Playfair for the wordmark, the sans
+ * for everything a person wrote, and this for everything the *system* says
+ * about it — which section of the history you're in, which model produced
+ * an answer, what state something is in. Small, tracked wide, upper case,
+ * never longer than a few words. It's what keeps metadata from reading as
+ * more content, and it's the one thing that has to stay disciplined:
+ * anything set in it must be a fact, not a sentence.
+ */
+.ui-label {
+  font-size: var(--fs-label);
+  font-weight: 500;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
 }
 
 /* The wordmark and the empty-state line — the only serif in the app. */

@@ -203,7 +203,7 @@ async function readSse(res, handlers) {
 
 export async function streamTurn(
   conversationId,
-  { content, endpointId, regenerate = false, images, skillIds, signal },
+  { content, endpointId, regenerate = false, images, attachments, skillIds, signal },
   handlers = {},
 ) {
   const res = await fetch(`/api/conversations/${conversationId}/stream`, {
@@ -215,6 +215,7 @@ export async function streamTurn(
       endpointId,
       regenerate,
       images,
+      attachments,
       skillIds,
       // Where the user is, so {{CURRENT_WEEKDAY}} / {{CURRENT_DATETIME}} /
       // {{CURRENT_TIMEZONE}} resolve to their clock, not the server's.

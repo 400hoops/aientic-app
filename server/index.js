@@ -177,6 +177,8 @@ const MAX_LEN = {
   content: 100_000,
   systemPrompt: 20_000,
   memory: 1_000,
+  attachment: 200_000,       // one pasted article or dropped text file
+  attachmentsTotal: 400_000, // everything attached to a single turn
   imageDataUrl: 12_000_000, // ≈9 MB of image in base64
 };
 
@@ -204,6 +206,37 @@ const sanitizeImages = (raw) =>
             s.length <= MAX_LEN.imageDataUrl
         )
         .slice(0, MAX_IMAGES);
+
+/**
+ * Text carried alongside a turn: a pasted article, a dropped .txt or .md.
+ *
+ * Kept out of the message body on purpose. A 40 KB article pasted into the
+ * composer buries the actual question in a wall of someone else's prose —
+ * as an attachment the question stays a question, the source stays quotable
+ * verbatim, and both are stored separately (see chatFiles.js, which already
+ * writes attachments into the Markdown mirror because the Claude importer
+ * has produced them since day one).
+ */
+const MAX_ATTACHMENTS = 5;
+
+const sanitizeAttachments = (raw) => {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  let budget = MAX_LEN.attachmentsTotal;
+  for (const item of raw.slice(0, MAX_ATTACHMENTS)) {
+    if (!item || typeof item !== "object") continue;
+    const text = typeof item.text === "string" ? item.text : "";
+    if (!text.trim()) continue;
+    const clipped = text.slice(0, Math.min(MAX_LEN.attachment, budget));
+    if (!clipped) break;
+    budget -= clipped.length;
+    out.push({
+      name: String(item.name || "Pasted text").slice(0, MAX_LEN.label),
+      text: clipped,
+    });
+  }
+  return out;
+};
 
 /** normaliseBase + the blocklist + a length cap, as one check. */
 const baseProblem = (base) => {
@@ -1171,8 +1204,16 @@ app.post("/api/private/stream", requireAuth, async (req, res) => {
     if (tooLong(content, MAX_LEN.content))
       return bad(res, 400, `Messages must be at most ${MAX_LEN.content} characters`);
     const images = sanitizeImages(m?.images);
-    if (!content && !images.length) continue;
-    history.push({ id: uid(), role, content, images, createdAt: Date.now() });
+    const attached = sanitizeAttachments(m?.attachments);
+    if (!content && !images.length && !attached.length) continue;
+    history.push({
+      id: uid(),
+      role,
+      content,
+      images,
+      ...(attached.length ? { attachments: attached } : {}),
+      createdAt: Date.now(),
+    });
   }
   if (!history.length) return bad(res, 400, "Nothing to answer");
 
@@ -1234,6 +1275,7 @@ app.post("/api/conversations/:id/stream", requireAuth, async (req, res) => {
     convo.skillIds = skillIds.filter((id) => mine.has(id)).slice(0, MAX_SKILLS);
   }
   const images = sanitizeImages(req.body?.images);
+  const attachments = sanitizeAttachments(req.body?.attachments);
   // The browser's IANA timezone, so {{CURRENT_*}} tokens resolve to where
   // the user is, not where the server runs. Invalid values fall back to
   // the server's clock inside expandSystemPrompt.
@@ -1253,8 +1295,10 @@ app.post("/api/conversations/:id/stream", requireAuth, async (req, res) => {
       convo.messages.pop();
   } else {
     const text = content?.trim();
-    // A turn is valid with text, photos, or both — but not neither.
-    if (!text && !images.length) return bad(res, 400, "Message is empty");
+    // A turn is valid with text, photos, attached text, or any mix — but
+    // not with none of them.
+    if (!text && !images.length && !attachments.length)
+      return bad(res, 400, "Message is empty");
     if (text && text.length > MAX_LEN.content)
       return bad(
         res,
@@ -1266,6 +1310,7 @@ app.post("/api/conversations/:id/stream", requireAuth, async (req, res) => {
       role: "user",
       content: text || "",
       images,
+      ...(attachments.length ? { attachments } : {}),
       createdAt: Date.now(),
     });
     if (convo.title === "New chat" && text) convo.title = titleFrom(text);

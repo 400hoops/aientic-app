@@ -18,6 +18,7 @@ import {
   IconArrowUp,
   IconCheck,
   IconChevronRight,
+  IconFileText,
   IconGhost,
   IconPanel,
   IconPlus,
@@ -34,6 +35,40 @@ import {
  * re-validates and reshapes them into image_url parts for the upstream).
  */
 const ATTACH_TYPES = ["image/jpeg", "image/png", "image/gif"];
+
+/* ---------- pasted and dropped text --------------------------------------
+ *
+ * Paste a whole article into the composer and the question you were about
+ * to ask disappears into it — you can't see the box, you can't edit the
+ * end, and the model gets no signal about where the source stops. Past a
+ * few hundred words a paste becomes an attachment instead: named, counted,
+ * removable, and fenced when it goes upstream.
+ *
+ * The threshold is deliberately not "any multi-line paste" — pasting a
+ * stack trace or a paragraph you want to talk about inline should stay
+ * inline. It's the length at which text stops being something you typed.
+ */
+const PASTE_AS_DOC_CHARS = 1200;
+const TEXT_TYPES = ["text/plain", "text/markdown", "text/csv", "application/json"];
+const TEXT_EXTENSIONS = /\.(txt|md|markdown|csv|json|log|rst|tex)$/i;
+const MAX_DOC_BYTES = 400 * 1024;
+const MAX_DOCS = 5;
+
+const isTextFile = (file) =>
+  TEXT_TYPES.includes(file.type) || TEXT_EXTENSIONS.test(file.name || "");
+
+/** "1,240 words" — the useful measure of a thing you're asking about. */
+const wordCount = (text) => (text.trim().match(/\S+/g) || []).length;
+
+/** The first line worth showing as a name, or a fallback. */
+const titleForPaste = (text) => {
+  const line = text
+    .split("\n")
+    .map((l) => l.trim())
+    .find((l) => l.length > 2);
+  if (!line) return "Pasted text";
+  return line.length > 48 ? line.slice(0, 48).trimEnd() + "…" : line;
+};
 const MAX_ATTACHMENTS = 4;
 const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
 
@@ -137,6 +172,8 @@ export default function AienticChatShell({
   const [images, setImages] = useState([]);
   const [preview, setPreview] = useState(null); // pending: { id, url (data URL) }
   const [imgError, setImgError] = useState(null);
+  // Text riding along with the turn: a pasted article, a dropped .md.
+  const [docs, setDocs] = useState([]);
   // Depth counter, not a boolean: dragging over a child fires dragleave on
   // the parent, and a boolean would flicker the highlight off mid-drag.
   const dragDepth = useRef(0);
@@ -764,6 +801,7 @@ export default function AienticChatShell({
               // rather than leaving the reader to retype it.
               setInput(payload.restore?.text || "");
               setImages(payload.restore?.attached || []);
+              setDocs(payload.restore?.documents || []);
             }
           }
         }
@@ -822,12 +860,22 @@ export default function AienticChatShell({
     if (!files.length) return;
     setNotice(null);
 
+    // A .zip is always an export; a .json only counts as one if it parses
+    // as a chat list, which the server decides — so a dropped .json goes to
+    // the importer, and everything else that reads as text becomes an
+    // attachment for this turn.
     const isExport = (f) =>
       /\.(zip|json)$/i.test(f.name) || f.type === "application/zip";
     const exports_ = onImportChats ? files.filter(isExport) : [];
     const rest = files.filter((f) => !exports_.includes(f));
+    const texts = rest.filter(isTextFile);
+    const pictures = rest.filter((f) => !texts.includes(f));
 
-    if (rest.length) await addFiles(rest);
+    if (texts.length) await addDocs(texts);
+    if (pictures.length) {
+      if (activeModel?.vision) await addFiles(pictures);
+      else setImgError(`${activeModel?.label || "This model"} can't look at images.`);
+    }
 
     for (const file of exports_) {
       setNotice(`Importing ${file.name}…`);
@@ -843,11 +891,46 @@ export default function AienticChatShell({
     }
   };
 
+  /** Read dropped/picked text files in as attachments. */
+  const addDocs = async (files) => {
+    const next = [];
+    let problem = null;
+    for (const file of files) {
+      if (docs.length + next.length >= MAX_DOCS) {
+        problem = `You can attach up to ${MAX_DOCS} documents.`;
+        break;
+      }
+      if (file.size > MAX_DOC_BYTES) {
+        problem = `${file.name} is larger than 400 KB.`;
+        continue;
+      }
+      const text = await file.text();
+      if (!text.trim()) continue;
+      next.push({ id: `${file.name}-${file.size}-${file.lastModified}`, name: file.name, text });
+    }
+    if (next.length) setDocs((prev) => [...prev, ...next]);
+    if (problem) setImgError(problem);
+  };
+
+  const removeDoc = (id) => setDocs((prev) => prev.filter((d) => d.id !== id));
+
   const onPaste = (e) => {
     const files = [...(e.clipboardData?.files || [])];
-    if (!files.length) return; // plain text pastes stay untouched
+    if (files.length) {
+      e.preventDefault();
+      acceptFiles(files);
+      return;
+    }
+
+    // A paste long enough to be a document becomes one, so the composer
+    // stays a place you can see what you're asking.
+    const text = e.clipboardData?.getData("text/plain") || "";
+    if (text.length < PASTE_AS_DOC_CHARS || docs.length >= MAX_DOCS) return;
     e.preventDefault();
-    acceptFiles(files);
+    setDocs((prev) => [
+      ...prev,
+      { id: `paste-${Date.now()}`, name: titleForPaste(text), text, pasted: true },
+    ]);
   };
 
   const onDrop = (e) => {
@@ -879,12 +962,21 @@ export default function AienticChatShell({
   const send = useCallback(async () => {
     const text = input.trim();
     const attached = images;
-    // Text, photos, or both — but not an empty turn.
-    if ((!text && !attached.length) || streaming || !activeModel || sendingRef.current) return;
+    const documents = docs;
+    // Text, photos, attached documents, or any mix — but not an empty turn.
+    // A pasted article on its own is a perfectly good question: "read this".
+    if (
+      (!text && !attached.length && !documents.length) ||
+      streaming ||
+      !activeModel ||
+      sendingRef.current
+    )
+      return;
     sendingRef.current = true;
     try {
       setInput("");
       setImages([]);
+      setDocs([]);
       let convoId = conversation?.id;
       const hadConversation = !!convoId;
 
@@ -906,6 +998,7 @@ export default function AienticChatShell({
           setError(err.message);
           setInput(text);
           setImages(attached);
+          setDocs(documents);
           return;
         }
       }
@@ -917,46 +1010,35 @@ export default function AienticChatShell({
       // authoritative title instead (see streamHandlers), which arrives
       // moments after this and can't be wrong, so there's nothing left to
       // compute here.
-      setConversation((prev) =>
-        prev
-          ? {
-              ...prev,
-              messages: [
-                ...prev.messages,
-                {
-                  id: "local",
-                  role: "user",
-                  content: text,
-                  // Same shape the server persists (data-URL strings), so the
-                  // bubble renders identically before the refresh round-trip.
-                  images: attached.map((img) => img.url),
-                  createdAt: Date.now(),
-                },
-              ],
-            }
-          : prev,
-      );
-
+      // Same shape the server persists (data-URL strings for photos, name +
+      // text for documents), so the bubble renders identically before the
+      // refresh round-trip — and so the private path can send it as history.
       const turn = {
         id: "local",
         role: "user",
         content: text,
         images: attached.map((img) => img.url),
+        attachments: documents.map((d) => ({ name: d.name, text: d.text })),
         createdAt: Date.now(),
       };
+
+      setConversation((prev) =>
+        prev ? { ...prev, messages: [...prev.messages, turn] } : prev,
+      );
 
       const fresh = !hadConversation;
       await run(convoId, {
         content: text,
         endpointId: activeModel.id,
         images: turn.images,
+        attachments: turn.attachments,
         skillIds,
         // A first turn that never produced a message leaves an empty chat
         // in the sidebar; run() clears it up rather than stranding it, and
         // hands the text and photos back to the composer. Neither field is
         // sent to the server — streamTurn builds its body from named fields.
         discardIfEmpty: fresh,
-        restore: { text, attached },
+        restore: { text, attached, documents },
         // A private turn carries the whole exchange with it: the server
         // has nothing stored to append to.
         ...(privateMode
@@ -969,6 +1051,7 @@ export default function AienticChatShell({
   }, [
     activeModel,
     conversation,
+    docs,
     images,
     input,
     onConversationCreated,
@@ -1219,6 +1302,21 @@ export default function AienticChatShell({
             {conversation?.title || "New chat"}
           </span>
         )}
+
+        {/* The right of the bar was empty. It now says what is answering in
+            this conversation and whether that model is loaded — the two
+            facts you'd otherwise open the picker to check. */}
+        {conversation && activeModel && (
+          <span className="ml-auto flex shrink-0 items-center gap-2 max-md:hidden">
+            {modelStatus[activeModel.id] === "loaded" && (
+              <span
+                title="Loaded in memory"
+                className="h-[6px] w-[6px] rounded-full bg-[var(--ok)]"
+              />
+            )}
+            <span className="ui-label">{activeModel.label}</span>
+          </span>
+        )}
       </header>
 
       <div className="relative min-h-0 flex-1">
@@ -1290,23 +1388,40 @@ export default function AienticChatShell({
             {messages.length === 0 && (
               // m-auto centres it in the column once the column is at least as
               // tall as the scroller.
-              <div className="m-auto text-center">
-                <p className="animate-fade-up text-[length:var(--fs-lg)] text-[var(--text-soft)]">
-                  {privateMode ? "You're in a private chat" : "What are we testing today?"}
+              // The first screen names what you're about to talk to, in the
+              // display face, because that's the one fact that changes what
+              // you'd type next. No suggested prompts: this is a console for
+              // your own models, not an assistant looking for something to do.
+              <div className="m-auto max-w-md text-center">
+                <p className="ui-label animate-fade-up">
+                  {privateMode ? "Private chat" : "New conversation"}
                 </p>
-                <p className="mt-2 animate-fade-up text-[length:var(--fs-sm2)] text-[var(--faint)]
-                            [animation-delay:90ms]">
+                <p className="wordmark mt-3 animate-fade-up text-[length:var(--fs-lg)]
+                              leading-tight text-[var(--text)] [animation-delay:60ms]">
                   {privateMode
-                    ? "Nothing here is written to the server. Closing this view is the delete."
+                    ? "Nothing here is written down"
+                    : activeModel?.label || "No models configured"}
+                </p>
+                <p className="mt-3 animate-fade-up text-[length:var(--fs-sm2)] leading-relaxed
+                              text-[var(--muted)] [animation-delay:120ms]">
+                  {privateMode
+                    ? "The server keeps no copy of this conversation. Closing the view is the delete."
                     : activeModel
-                      ? `${activeModel.label}${activeModel.note ? ` · ${activeModel.note}` : ""}`
-                      : "No models configured yet."}
+                      ? activeModel.note ||
+                        "Ask a question, paste an article, or drop a document in."
+                      : "An admin adds model endpoints under Admin → Endpoints."}
                 </p>
               </div>
             )}
 
             {messages.map((m, i) => {
               const isLast = i === messages.length - 1;
+              // The model that answered the turn before this one, so a
+              // repeated attribution can be left off.
+              const previousModel = messages
+                .slice(0, i)
+                .filter((x) => x.role === "assistant")
+                .pop()?.model;
 
               if (m.role === "user") {
                 const isAnchor = i === lastUserIndex;
@@ -1401,6 +1516,24 @@ export default function AienticChatShell({
                           className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md
                                       bg-[var(--hover)] px-4 py-2.5 text-[length:var(--fs-md)] leading-[1.65]"
                         >
+                          {m.attachments?.length > 0 && (
+                            <span className="mb-1.5 flex flex-col gap-1">
+                              {m.attachments.map((doc, j) => (
+                                <span
+                                  key={`${m.id}-doc-${j}`}
+                                  title={doc.text?.slice(0, 400)}
+                                  className="flex items-center gap-1.5 rounded-md bg-[var(--panel)]
+                                             px-2 py-1 text-[length:var(--fs-xs)] text-[var(--text-soft)]"
+                                >
+                                  <IconFileText className="h-[13px] w-[13px] shrink-0 text-[var(--muted)]" />
+                                  <span className="min-w-0 flex-1 truncate">{doc.name}</span>
+                                  <span className="ui-label shrink-0">
+                                    {wordCount(doc.text || "").toLocaleString()} w
+                                  </span>
+                                </span>
+                              ))}
+                            </span>
+                          )}
                           {m.images?.length > 0 && (
                             <span className="mb-1.5 flex flex-wrap gap-1.5">
                               {m.images.map((url, j) => (
@@ -1442,6 +1575,15 @@ export default function AienticChatShell({
                   className={`mb-10 animate-fade-up rounded-xl transition-colors duration-500
                               ${flash === m.id ? "bg-[var(--hover)]" : ""}`}
                 >
+                  {/* Who answered. The app lets you change model mid-chat,
+                      so a transcript with no attribution is a transcript you
+                      can't read back: two answers in the same thread can
+                      come from two different machines. Shown only where it's
+                      recorded, and only when it changes — a run of answers
+                      from one model is labelled once. */}
+                  {m.model && m.model !== previousModel && (
+                    <div className="ui-label mb-2">{m.model}</div>
+                  )}
                   <Reasoning text={m.reasoning} />
                   <Markdown>{m.content}</Markdown>
                   {/* A single blinking caret line says "still thinking";
@@ -1594,6 +1736,37 @@ export default function AienticChatShell({
                 </p>
               )}
 
+              {/* Documents attached to this turn. A pasted article shows
+                  what it is and how long it is — the two things you need to
+                  know before you send it somewhere. */}
+              {docs.length > 0 && (
+                <div className="flex flex-col gap-1.5 px-1 pt-2">
+                  {docs.map((doc) => (
+                    <div
+                      key={doc.id}
+                      className="flex animate-scale-in items-center gap-2 rounded-lg border
+                                 border-[var(--border)] bg-[var(--panel)] px-2.5 py-1.5"
+                    >
+                      <IconFileText className="h-[15px] w-[15px] shrink-0 text-[var(--muted)]" />
+                      <span className="min-w-0 flex-1 truncate text-[length:var(--fs-sm2)]">
+                        {doc.name}
+                      </span>
+                      <span className="ui-label shrink-0">
+                        {doc.pasted ? "Pasted · " : ""}
+                        {wordCount(doc.text).toLocaleString()} words
+                      </span>
+                      <button
+                        onClick={() => removeDoc(doc.id)}
+                        title="Remove"
+                        className="shrink-0 rounded p-0.5 text-[var(--muted)] hover:text-[var(--text)]"
+                      >
+                        <IconX className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
               {/* Skills riding along with this chat. Kept above the controls
                   row so a long list wraps into the card rather than
                   squeezing the model picker. */}
@@ -1637,12 +1810,18 @@ export default function AienticChatShell({
                       two line up as one control. Opens the native picker; the
                       accept list is the first gate, addFiles re-checks every
                       file. */}
-                  {activeModel?.vision && (
-                    <>
+                  {/* Always here: every model can read a document, even the
+                      ones that can't look at a photo. The accept list is what
+                      narrows, and addFiles re-checks whatever arrives. */}
+                  <>
                       <button
                         onClick={() => fileRef.current?.click()}
                         disabled={streaming}
-                        title="Attach photos (JPEG, PNG or GIF)"
+                        title={
+                          activeModel?.vision
+                            ? "Attach a document or photo"
+                            : "Attach a document"
+                        }
                         className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md
                                    text-[var(--muted)] transition-colors hover:bg-[var(--hover)]
                                    disabled:opacity-50"
@@ -1652,16 +1831,19 @@ export default function AienticChatShell({
                       <input
                         ref={fileRef}
                         type="file"
-                        accept="image/jpeg,image/png,image/gif"
+                        accept={
+                          activeModel?.vision
+                            ? "image/jpeg,image/png,image/gif,.txt,.md,.markdown,.csv,.log,.rst"
+                            : ".txt,.md,.markdown,.csv,.log,.rst,text/plain"
+                        }
                         multiple
                         className="hidden"
                         onChange={(e) => {
-                          addFiles([...e.target.files]);
+                          acceptFiles([...e.target.files]);
                           e.target.value = ""; // allow re-picking the same file
                         }}
                       />
-                    </>
-                  )}
+                  </>
 
                   <ModelPicker
                     models={models}

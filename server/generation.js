@@ -256,19 +256,42 @@ export async function streamCompletion({
   // content parts (text plus one image_url per photo, base64 data URLs —
   // exactly what llama-server's CLIP models decode). Text-only turns stay
   // plain strings, which is cheaper for the common case.
+  /**
+   * Attached text — a pasted article, a dropped .md — goes up ahead of the
+   * question, fenced and named. The fence matters: without it a model has
+   * no way to tell where someone else's prose ends and the actual
+   * instruction begins, and long pastes reliably end up answered as though
+   * the article had asked the question.
+   */
+  const withAttachments = (m) => {
+    if (!m.attachments?.length) return m.content || "";
+    const documents = m.attachments
+      .map(
+        (a) =>
+          `<document name="${String(a.name).replace(/"/g, "'")}">\n${a.text}\n</document>`
+      )
+      .join("\n\n");
+    // The question last: it's what the model should still be holding when
+    // it starts writing.
+    return m.content ? `${documents}\n\n${m.content}` : documents;
+  };
+
   const upstreamMessage = (m) =>
     m.role === "user" && m.images?.length
       ? {
           role: "user",
           content: [
-            ...(m.content ? [{ type: "text", text: m.content }] : []),
+            ...(withAttachments(m) ? [{ type: "text", text: withAttachments(m) }] : []),
             ...m.images.map((url) => ({
               type: "image_url",
               image_url: { url },
             })),
           ],
         }
-      : { role: m.role, content: m.content };
+      : {
+          role: m.role,
+          content: m.role === "user" ? withAttachments(m) : m.content,
+        };
 
   const messages = [];
   // The admin's prompt for this model, plus whatever this user has asked to

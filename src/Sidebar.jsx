@@ -19,7 +19,7 @@ import {
   IconTrash,
 } from "./Icons.jsx";
 import Wordmark from "./Wordmark.jsx";
-import { initial } from "./format.js";
+import { groupByDate, initial } from "./format.js";
 
 // The row "…" menu's own size, needed before it exists: the trigger works
 // out where to put it, and a menu near the bottom of the screen flips above
@@ -155,9 +155,7 @@ export default function Sidebar({
   const recents = searching ? conversations : conversations.filter((c) => !c.pinned);
 
   const heading = (text) => (
-    <div className="ui-tight px-2.5 pb-1.5 pt-3 text-[length:var(--fs-xs)] text-[var(--muted)]">
-      {text}
-    </div>
+    <div className="ui-label px-2.5 pb-1.5 pt-4 first:pt-1">{text}</div>
   );
 
   const chatRow = (c) => (
@@ -359,8 +357,14 @@ export default function Sidebar({
                 {pinned.map(chatRow)}
               </>
             )}
-            {heading("Recents")}
-            {recents.map(chatRow)}
+            {/* Dated slabs rather than one endless list: "Today" and "March"
+                are how anyone actually looks for a conversation they had. */}
+            {groupByDate(recents).map((group) => (
+              <div key={group.label}>
+                {heading(group.label)}
+                {group.items.map(chatRow)}
+              </div>
+            ))}
           </>
         )}
 

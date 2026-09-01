@@ -205,6 +205,37 @@ Chats can be pinned from the `…` on their row, which gives them their own
 section above Recents. Pinning deliberately doesn't touch the chat's
 updated time, so a pinned chat doesn't jump around when you use it.
 
+## Pasting an article
+
+Paste more than a few hundred words into the composer and it becomes an
+attachment rather than filling the box: named after its first line, counted
+in words, removable, and — this is the part that matters — fenced in a
+`<document>` tag when it goes to the model, with your question after it.
+Without the fence a long paste is reliably answered as though the article
+had asked the question. Dropping a `.txt`, `.md`, `.csv` or `.log` on the
+composer does the same thing, and the `+` takes them on any model, not just
+one that can see photos.
+
+## Tests
+
+```bash
+npx playwright install chromium   # once
+npm run test:e2e
+```
+
+End-to-end only, and against what ships: the real Express server, the real
+production build, a real browser. The only thing faked is the model —
+`tests/stub-model.mjs` is an OpenAI-compatible endpoint that answers
+instantly and reports what it was asked, which is how the suite proves a
+pasted article actually reached the model rather than merely appearing on
+screen. The server runs against a throwaway data directory under the OS temp
+dir, so a test run can't touch your own history.
+
+The browser is cut off from the internet for the duration (`tests/e2e/test.js`)
+— the app pulls its webfonts from Google, and a machine that can't reach them
+would otherwise fail on navigation timeouts that have nothing to do with the
+app. Set `CHROMIUM_PATH` to use a system Chromium instead of Playwright's own.
+
 ## Importing from Claude
 
 **Import chats** in the sidebar takes a Claude data export — the zip that
