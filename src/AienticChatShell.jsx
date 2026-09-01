@@ -1130,6 +1130,30 @@ export default function AienticChatShell({
       </header>
 
       <div className="relative min-h-0 flex-1">
+        {/* Errors sit under the title bar at the top right, not in the
+            transcript: a failure isn't part of the conversation, and one
+            buried at the end of the messages scrolls away the moment the
+            next answer arrives. Dismissible, and replaced rather than
+            stacked — only the most recent failure is worth reading. */}
+        {error && (
+          <div
+            role="alert"
+            className="absolute right-4 top-3 z-20 flex max-w-sm animate-scale-in items-start gap-2
+                       rounded-lg border border-[var(--danger-border)] bg-[var(--danger-bg)]
+                       px-3 py-2.5 text-[13px] text-[var(--danger)]
+                       shadow-[0_8px_30px_rgba(0,0,0,0.12)] max-md:left-4 max-md:max-w-none"
+          >
+            <span className="min-w-0 flex-1">{error}</span>
+            <button
+              onClick={() => setError(null)}
+              title="Dismiss"
+              className="shrink-0 rounded p-0.5 opacity-70 hover:opacity-100"
+            >
+              <IconX className="h-[14px] w-[14px]" />
+            </button>
+          </div>
+        )}
+
         <div
           ref={setScrollRef}
           onScroll={onScroll}
@@ -1330,14 +1354,6 @@ export default function AienticChatShell({
               );
             })}
 
-            {error && (
-              <div
-                className="mb-8 animate-fade-up rounded-lg border border-[var(--danger-border)] bg-[var(--danger-bg)]
-                            px-4 py-3 text-[14px] text-[var(--danger)]"
-              >
-                {error}
-              </div>
-            )}
 
             {/* The reserve itself. aria-hidden and inert to everything: it is
                 empty layout, not content. */}
