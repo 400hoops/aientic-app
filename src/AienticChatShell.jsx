@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import * as api from "./api.js";
 import { copyText } from "./clipboard.js";
 import PreviewableImage from "./ImageLightbox.jsx";
@@ -108,6 +115,10 @@ export default function AienticChatShell({
   const [titleEditing, setTitleEditing] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
   const [atBottom, setAtBottom] = useState(true);
+  // Blank space held below the last turn so the question can sit at the top
+  // of the viewport while its answer arrives underneath. Recomputed as the
+  // answer grows, shrinking to nothing once it fills the screen on its own.
+  const [tailSpace, setTailSpace] = useState(0);
   const [images, setImages] = useState([]);
   const [preview, setPreview] = useState(null); // pending: { id, url (data URL) }
   const [imgError, setImgError] = useState(null);
@@ -153,6 +164,8 @@ export default function AienticChatShell({
   const [composerH, setComposerH] = useState(96);
 
   const messages = conversation?.messages ?? [];
+  // The turn the view pins to: the most recent question asked.
+  const lastUserIndex = messages.map((m) => m.role).lastIndexOf("user");
   // Blank out only when there is genuinely nothing to show yet: a deep link
   // or refresh whose conversation hasn't arrived, or a fresh /new load whose
   // model list is still in flight (otherwise the composer would flash "No
@@ -289,6 +302,10 @@ export default function AienticChatShell({
   // `followRef` away from it, so the auto-scroll-to-bottom effect fought
   // every scroll attempt back to the bottom on the very next streamed token
   // — scrolling away during generation was effectively impossible.
+  const contentRef = useRef(null);
+  // The last question on screen — what the view is pinned to after a send.
+  const anchorRef = useRef(null);
+
   const scrollCleanupRef = useRef(null);
   const setScrollRef = useCallback((el) => {
     scrollRef.current = el;
@@ -358,6 +375,45 @@ export default function AienticChatShell({
     // still in flight from the button would otherwise keep overriding this.
     if (el) el.scrollTop = el.scrollHeight;
   }, [tail?.content, tail?.reasoning, streaming]);
+
+  /**
+   * Push the question you just asked to the top of the screen.
+   *
+   * The trick is entirely in the spacer: reserve enough empty height below
+   * the last turn that "scrolled to the bottom" and "that question at the
+   * top" are the same position. Everything else — the send, the streaming
+   * follow, the scroll-to-bottom button — keeps aiming at the bottom and
+   * gets this for free. As the answer grows the reserve shrinks, so a long
+   * reply scrolls the question up and off exactly as it always did.
+   */
+  const TOP_GAP = 24; // breathing room above the pinned question
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    const content = contentRef.current;
+    const anchor = anchorRef.current;
+    if (!el || !content || !anchor) {
+      setTailSpace(0);
+      return;
+    }
+    // Measured off the live boxes, with the two things we control ourselves
+    // (the padding under the list, and the spacer already in place) taken
+    // back out — otherwise each pass would measure its own last answer.
+    const reserved = cardClearance + 14 + tailSpace;
+    const tailHeight =
+      content.getBoundingClientRect().bottom -
+      reserved -
+      anchor.getBoundingClientRect().top;
+    const room = el.clientHeight - (cardClearance + 14) - tailHeight - TOP_GAP;
+    const next = Math.max(0, Math.round(room));
+    if (Math.abs(next - tailSpace) > 1) setTailSpace(next);
+  });
+
+  // Applying the spacer moves the bottom; if the view was following it,
+  // follow it to the new one.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el && followRef.current) el.scrollTo({ top: el.scrollHeight });
+  }, [tailSpace]);
 
   // The composer floats over the messages; composerH positions the
   // scroll-to-bottom button above it. A callback ref, not useRef + a []
@@ -919,6 +975,7 @@ export default function AienticChatShell({
             // +14, not +8: the card's own box-shadow bleeds a couple of
             // pixels past its border, and 8px wasn't quite enough clearance
             // to keep that off the last line too.
+            ref={contentRef}
             style={{ paddingBottom: cardClearance + 14 }}
             className="mx-auto flex min-h-full max-w-3xl flex-col px-6 pt-10 max-md:px-4 select-none-touch"
           >
@@ -942,6 +999,7 @@ export default function AienticChatShell({
               const isLast = i === messages.length - 1;
 
               if (m.role === "user") {
+                const isAnchor = i === lastUserIndex;
                 const isEditing = editing?.id === m.id;
                 return (
                   // Index key, not the message id: the assistant bubble is
@@ -949,7 +1007,11 @@ export default function AienticChatShell({
                   // patched to the server's real id. Keying by id would remount
                   // it at that moment and replay the fade mid-generation; the
                   // index is stable across that swap, so it settles in once.
-                  <div key={i} className="mb-8 flex animate-fade-up flex-col items-end">
+                  <div
+                    key={i}
+                    ref={isAnchor ? anchorRef : null}
+                    className="mb-8 flex animate-fade-up flex-col items-end"
+                  >
                     {isEditing ? (
                       <div className="w-full max-w-[85%]">
                         {/* The photos on the turn, editable the only way
@@ -1093,6 +1155,10 @@ export default function AienticChatShell({
                 {error}
               </div>
             )}
+
+            {/* The reserve itself. aria-hidden and inert to everything: it is
+                empty layout, not content. */}
+            <div aria-hidden style={{ height: tailSpace }} />
           </div>
         </div>
 
