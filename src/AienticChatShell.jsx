@@ -18,6 +18,7 @@ import {
   IconArrowUp,
   IconCheck,
   IconChevronRight,
+  IconGhost,
   IconPanel,
   IconPlus,
   IconSparkles,
@@ -38,6 +39,12 @@ const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
 
 // Breathing room above a question pinned to the top of the viewport.
 const TOP_GAP = 24;
+
+// The id a private chat answers to. It never reaches the server — see
+// /api/private/stream, which has no conversation to name — but the whole
+// shell is keyed on "which conversation is this", so one constant keeps
+// every path (patchLast, ownStreamRef, the scroll anchor) working as-is.
+const PRIVATE_ID = "private";
 
 const fileToDataUrl = (file) =>
   new Promise((resolve, reject) => {
@@ -108,6 +115,7 @@ export default function AienticChatShell({
   onConversationNotFound,
   onConversationsChanged,
   onImportChats,
+  privateMode = false,
   onConversationDeleted,
   sidebarOpen,
   onShowSidebar,
@@ -220,8 +228,8 @@ export default function AienticChatShell({
   // keeps the current one on screen until the next one lands — a blank
   // frame on every click just reads as lag.
   const isLoadingConversation =
-    (!!conversationId && conversation === null) ||
-    (!conversationId && !modelsLoaded);
+    (!privateMode && !!conversationId && conversation === null) ||
+    (!privateMode && !conversationId && !modelsLoaded);
   const activeModel = useMemo(
     () => models.find((m) => m.id === modelId) || models[0] || null,
     [models, modelId],
@@ -242,6 +250,17 @@ export default function AienticChatShell({
     idRef.current = conversationId;
     setError(null);
     setEditing(null);
+
+    if (privateMode) {
+      // Nothing to fetch, and nothing to write: the transcript lives here
+      // in component state until this view goes away.
+      setConversation((prev) =>
+        prev?.id === PRIVATE_ID
+          ? prev
+          : { id: PRIVATE_ID, title: "Private chat", messages: [] }
+      );
+      return;
+    }
 
     if (!conversationId) {
       setConversation(null);
@@ -313,7 +332,7 @@ export default function AienticChatShell({
     };
     // onModelChange is stable; re-running on it would clobber a manual switch.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conversationId]);
+  }, [conversationId, privateMode]);
 
   const scrollToBottom = useCallback((behavior = "smooth") => {
     const el = scrollRef.current;
@@ -660,11 +679,17 @@ export default function AienticChatShell({
       );
 
       try {
-        await api.streamTurn(
-          convoId,
-          { ...payload, signal: controller.signal },
-          streamHandlers(convoId),
-        );
+        if (payload.private)
+          await api.streamPrivateTurn(
+            { ...payload, signal: controller.signal },
+            streamHandlers(convoId),
+          );
+        else
+          await api.streamTurn(
+            convoId,
+            { ...payload, signal: controller.signal },
+            streamHandlers(convoId),
+          );
       } catch (err) {
         if (err.name !== "AbortError") {
           setError(err.message);
@@ -798,8 +823,8 @@ export default function AienticChatShell({
       let convoId = conversation?.id;
 
       // The conversation is created on the first message, so empty shells
-      // never pile up in the sidebar.
-      if (!convoId) {
+      // never pile up in the sidebar. A private chat has none to create.
+      if (!convoId && !privateMode) {
         try {
           const { conversation: created } = await api.createConversation(
             activeModel.id,
@@ -846,11 +871,24 @@ export default function AienticChatShell({
           : prev,
       );
 
+      const turn = {
+        id: "local",
+        role: "user",
+        content: text,
+        images: attached.map((img) => img.url),
+        createdAt: Date.now(),
+      };
+
       await run(convoId, {
         content: text,
         endpointId: activeModel.id,
-        images: attached.map((img) => img.url),
+        images: turn.images,
         skillIds,
+        // A private turn carries the whole exchange with it: the server
+        // has nothing stored to append to.
+        ...(privateMode
+          ? { private: true, messages: [...(conversation?.messages || []), turn] }
+          : {}),
       });
     } finally {
       sendingRef.current = false;
@@ -861,6 +899,7 @@ export default function AienticChatShell({
     images,
     input,
     onConversationCreated,
+    privateMode,
     run,
     skillIds,
     streaming,
@@ -877,19 +916,43 @@ export default function AienticChatShell({
             !(m.role === "assistant" && i === prev.messages.length - 1),
         ),
       }));
+      const trimmed = conversation.messages.filter(
+        (m, i) => !(m.role === "assistant" && i === conversation.messages.length - 1),
+      );
       await run(conversation.id, {
         regenerate: true,
         endpointId: activeModel.id,
+        ...(privateMode
+          ? { private: true, messages: trimmed, skillIds }
+          : {}),
       });
     } finally {
       sendingRef.current = false;
     }
-  }, [activeModel, conversation, run, streaming]);
+  }, [activeModel, conversation, privateMode, run, skillIds, streaming]);
 
   /* ---------- message actions -------------------------------------------- */
 
   const removeMessage = async (messageId) => {
     if (!conversation) return;
+
+    // Private chats have no server copy to delete from — the transcript on
+    // screen is the only one there is.
+    if (privateMode) {
+      setConversation((prev) => {
+        if (!prev) return prev;
+        const at = prev.messages.findIndex((m) => m.id === messageId);
+        if (at === -1) return prev;
+        let end = at + 1;
+        if (prev.messages[at].role === "user")
+          while (prev.messages[end]?.role === "assistant") end++;
+        const messages = [...prev.messages];
+        messages.splice(at, end - at);
+        return { ...prev, messages };
+      });
+      return;
+    }
+
     try {
       const { conversation: next } = await api.deleteMessage(
         conversation.id,
@@ -917,6 +980,24 @@ export default function AienticChatShell({
     // Same rule as a new turn: dropping every photo *and* the text would
     // leave nothing to re-answer.
     if (!text && !images.length) return;
+
+    if (privateMode) {
+      // Same edit, applied where the transcript actually lives.
+      const at = conversation.messages.findIndex((m) => m.id === editing.id);
+      const messages = conversation.messages.slice(0, at + 1);
+      messages[at] = { ...messages[at], content: text, images };
+      const next = { ...conversation, messages };
+      setConversation(next);
+      setEditing(null);
+      await run(conversation.id, {
+        regenerate: true,
+        endpointId: activeModel.id,
+        private: true,
+        messages,
+        skillIds,
+      });
+      return;
+    }
 
     const { conversation: next } = await api.editMessage(
       conversation.id,
@@ -1006,7 +1087,16 @@ export default function AienticChatShell({
             <IconPanel className="h-[18px] w-[18px] shrink-0" />
           </button>
         )}
-        {titleEditing ? (
+        {privateMode ? (
+          <span className="flex min-w-0 flex-1 items-center gap-2 text-[length:var(--fs-base2)]
+                           text-[var(--text-soft)]">
+            <IconGhost className="h-[17px] w-[17px] shrink-0" />
+            Private chat
+            <span className="truncate text-[length:var(--fs-xs)] text-[var(--muted)]">
+              — not saved anywhere
+            </span>
+          </span>
+        ) : titleEditing ? (
           <input
             autoFocus
             value={titleDraft}
@@ -1075,13 +1165,15 @@ export default function AienticChatShell({
               // tall as the scroller.
               <div className="m-auto text-center">
                 <p className="animate-fade-up text-[length:var(--fs-lg)] text-[var(--text-soft)]">
-                  What are we testing today?
+                  {privateMode ? "You're in a private chat" : "What are we testing today?"}
                 </p>
                 <p className="mt-2 animate-fade-up text-[length:var(--fs-sm2)] text-[var(--faint)]
                             [animation-delay:90ms]">
-                  {activeModel
-                    ? `${activeModel.label}${activeModel.note ? ` · ${activeModel.note}` : ""}`
-                    : "No models configured yet."}
+                  {privateMode
+                    ? "Nothing here is written to the server. Closing this view is the delete."
+                    : activeModel
+                      ? `${activeModel.label}${activeModel.note ? ` · ${activeModel.note}` : ""}`
+                      : "No models configured yet."}
                 </p>
               </div>
             )}

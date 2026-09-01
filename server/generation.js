@@ -221,9 +221,18 @@ export async function streamCompletion({
     createdAt: Date.now(),
     model: endpoint.label,
   };
+  // A private chat hands us a conversation that isn't in the store at all
+  // (see /api/private/stream). Streaming it is identical; writing it down
+  // is what must not happen, here or at any checkpoint below.
+  const ephemeral = !db.conversations.includes(conversation);
+  const persist = () => {
+    if (ephemeral) return;
+    save();
+    touchConversation(conversation);
+  };
+
   conversation.messages.push(assistant);
-  save();
-  touchConversation(conversation);
+  persist();
 
   const gen = {
     assistant,
@@ -386,8 +395,7 @@ export async function streamCompletion({
         // Checkpoint occasionally so a crash mid-answer keeps most of it.
         if (Date.now() - persistAt > 2000) {
           persistAt = Date.now();
-          save();
-          touchConversation(conversation);
+          persist();
         }
       }
     }
@@ -397,16 +405,14 @@ export async function streamCompletion({
     // start reads as older than the question it answers.
     assistant.createdAt = Date.now();
     conversation.updatedAt = Date.now();
-    save();
-    touchConversation(conversation);
+    persist();
     sse(gen, "done", { message: assistant });
   } catch (err) {
     // Same on the way out: a stopped or failed run keeps whatever streamed,
     // so that partial answer is stamped when it stopped.
     assistant.createdAt = Date.now();
     conversation.updatedAt = Date.now();
-    save();
-    touchConversation(conversation);
+    persist();
 
     if (timedOut) {
       // The connect watchdog fired, not a user Stop.
@@ -414,8 +420,7 @@ export async function streamCompletion({
         conversation.messages = conversation.messages.filter(
           (m) => m.id !== assistant.id
         );
-        save();
-        touchConversation(conversation);
+        persist();
       }
       sse(gen, "error", {
         message: `${endpoint.label} took too long to start responding (no reply within ${Math.round(FIRST_RESPONSE_TIMEOUT_MS / 1000)} s).`,
@@ -429,8 +434,7 @@ export async function streamCompletion({
         conversation.messages = conversation.messages.filter(
           (m) => m.id !== assistant.id
         );
-        save();
-        touchConversation(conversation);
+        persist();
       }
       sse(gen, "error", { message });
     }

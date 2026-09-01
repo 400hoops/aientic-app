@@ -1138,6 +1138,66 @@ app.get("/api/conversations/:id/export", requireAuth, (req, res) => {
   );
 });
 
+/* ---------- private chats ------------------------------------------------ */
+
+/**
+ * A conversation the server never keeps.
+ *
+ * Everything else here is stored so history follows the account — which is
+ * the whole point of the app, and exactly what you don't want for some
+ * questions. A private chat lives in the browser tab: the client posts the
+ * whole exchange each turn, the answer streams back, and nothing touches
+ * data.json or data/chats. Closing the tab is the delete.
+ *
+ * Your skills and memory still apply — they're yours, and the model is
+ * yours. What's missing is only the writing down.
+ */
+app.post("/api/private/stream", requireAuth, async (req, res) => {
+  const { messages, endpointId, timeZone, skillIds } = req.body || {};
+  const endpoint = db.endpoints.find((e) => e.id === endpointId);
+  if (!endpoint) return bad(res, 400, "That model is no longer configured");
+  if (!Array.isArray(messages) || !messages.length)
+    return bad(res, 400, "Nothing to answer");
+
+  const history = [];
+  for (const m of messages.slice(-200)) {
+    const role = m?.role === "assistant" ? "assistant" : "user";
+    const content = typeof m?.content === "string" ? m.content : "";
+    if (tooLong(content, MAX_LEN.content))
+      return bad(res, 400, `Messages must be at most ${MAX_LEN.content} characters`);
+    const images = sanitizeImages(m?.images);
+    if (!content && !images.length) continue;
+    history.push({ id: uid(), role, content, images, createdAt: Date.now() });
+  }
+  if (!history.length) return bad(res, 400, "Nothing to answer");
+
+  const mine = new Set(skillsFor(req.user.id).map((s) => s.id));
+  // A conversation object that exists only for the length of this request:
+  // it is never pushed into db.conversations, so nothing persists it and
+  // the file mirror has nothing to write.
+  const conversation = {
+    id: "private-" + uid(),
+    userId: req.user.id,
+    title: "Private chat",
+    endpointId: endpoint.id,
+    skillIds: Array.isArray(skillIds) ? skillIds.filter((id) => mine.has(id)) : [],
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    messages: history,
+  };
+
+  await streamCompletion({
+    res,
+    conversation,
+    endpoint,
+    sampler: await samplerFor(endpoint.id),
+    apiKey: db.keys[endpoint.baseUrl],
+    history,
+    user: req.user,
+    clientTimeZone: typeof timeZone === "string" ? timeZone : undefined,
+  });
+});
+
 /* ---------- generation --------------------------------------------------- */
 
 // Re-attach to a run already in progress — what a refreshed tab calls.

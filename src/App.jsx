@@ -38,12 +38,17 @@ const parseRoute = (pathname) => {
   const chat = pathname.match(/^\/chat\/([^/]+)\/?$/);
   if (chat) return { view: "chat", activeId: chat[1] };
   if (pathname === "/new") return { view: "chat", activeId: null };
+  // /private is a route so a reload lands back in a private chat rather
+  // than a saved one — the transcript is gone either way, but the mode
+  // shouldn't silently flip to the one that writes things down.
+  if (pathname === "/private") return { view: "private", activeId: null };
   if (pathname === "/sampler") return { view: "sampler", activeId: null };
   if (pathname === "/admin") return { view: "admin", activeId: null };
   return { view: "chat", activeId: null };
 };
 
 const routePath = (view, activeId) => {
+  if (view === "private") return "/private";
   if (view === "sampler") return "/sampler";
   if (view === "admin") return "/admin";
   return activeId ? `/chat/${activeId}` : "/new";
@@ -301,6 +306,14 @@ export default function App() {
     closeOnPhone();
   };
 
+  // A chat the server never stores. Leaving the view is what deletes it,
+  // so the id is cleared on the way in and the shell starts empty.
+  const privateChat = () => {
+    setActiveId(null);
+    setView("private");
+    closeOnPhone();
+  };
+
   const navigate = (next) => {
     setView(next);
     closeOnPhone();
@@ -365,6 +378,7 @@ export default function App() {
       theme={theme}
       onFilter={setFilter}
       onNewChat={newChat}
+      onPrivateChat={privateChat}
       onImport={importChats}
       onOpenSettings={() => setSettingsOpen(true)}
       onOpen={openChat}
@@ -433,8 +447,12 @@ export default function App() {
         </div>
       </div>
 
-      {effectiveView === "chat" && (
+      {(effectiveView === "chat" || effectiveView === "private") && (
         <AienticChatShell
+          // Remounted when the mode flips, so a private transcript can
+          // never survive into a saved chat (or the other way round).
+          key={effectiveView === "private" ? "private" : "chat"}
+          privateMode={effectiveView === "private"}
           models={models}
           modelsLoaded={modelsLoaded}
           modelStatus={modelStatus}

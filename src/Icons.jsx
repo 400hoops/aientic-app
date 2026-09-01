@@ -11,6 +11,7 @@ import {
   ChevronDown,
   ChevronRight,
   Copy,
+  Ghost,
   Download,
   LogOut,
   MoreHorizontal,
@@ -44,6 +45,7 @@ export const IconChevronDown = thin(ChevronDown, "IconChevronDown");
 export const IconChevronRight = thin(ChevronRight, "IconChevronRight");
 export const IconCopy = thin(Copy, "IconCopy");
 export const IconDownload = thin(Download, "IconDownload");
+export const IconGhost = thin(Ghost, "IconGhost");
 export const IconLogOut = thin(LogOut, "IconLogOut");
 export const IconMoon = thin(Moon, "IconMoon");
 export const IconMore = thin(MoreHorizontal, "IconMore");

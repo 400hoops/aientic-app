@@ -248,6 +248,40 @@ export async function attachStream(conversationId, { signal }, handlers = {}) {
   return true;
 }
 
+/**
+ * A private turn: the whole exchange goes up with the request and nothing
+ * comes back to a conversation id, because there isn't one. See
+ * /api/private/stream — the server keeps none of it.
+ */
+export async function streamPrivateTurn(
+  { messages, endpointId, skillIds, signal },
+  handlers = {},
+) {
+  const res = await fetch("/api/private/stream", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      messages,
+      endpointId,
+      skillIds,
+      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    }),
+    signal,
+  });
+
+  if (!res.ok || !res.body) {
+    let message = `Request failed (${res.status})`;
+    try {
+      message = (await res.json())?.error || message;
+    } catch {
+      /* not JSON */
+    }
+    throw new Error(message);
+  }
+  await readSse(res, handlers);
+}
+
 /** Explicitly cancel a run; merely disconnecting no longer stops one. */
 export const stopStream = (conversationId) =>
   request(`/conversations/${conversationId}/stop`, { method: "POST" });
