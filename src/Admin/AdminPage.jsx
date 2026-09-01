@@ -8,7 +8,7 @@ import Select from "../Select.jsx";
 const card =
   "rounded-xl border border-[var(--border)] bg-[var(--panel)] px-6 py-5";
 const field =
-  "w-full rounded-lg border border-[var(--border-strong)] bg-[var(--raised)] px-3.5 py-2.5 " +
+  "w-full rounded-lg border border-[var(--border-strong)] bg-[var(--field)] px-3.5 py-2.5 " +
   "text-[14px] max-md:text-[16px] text-[var(--text)] placeholder:text-[var(--faint)] " +
   "focus:border-[var(--focus)] focus:outline-none";
 const label = "mb-1.5 block text-[13px] text-[var(--text-soft)]";

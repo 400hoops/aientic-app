@@ -218,8 +218,8 @@ export default function Sidebar({
 
       <div className="px-3 pb-1 pt-4">
         {/* Filled with --raised, matching the composer's own input field. */}
-        <div className="flex items-center gap-2 rounded-lg border border-[var(--border)]
-                        bg-[var(--raised)] px-2.5 py-2 focus-within:border-[var(--border-strong)]">
+        <div className="flex items-center gap-2 rounded-lg border border-[var(--border-strong)]
+                        bg-[var(--field)] px-2.5 py-2 focus-within:border-[var(--focus)]">
           <IconSearch className="h-[15px] w-[15px] text-[var(--muted)]" />
           <input
             value={filter}
@@ -306,7 +306,7 @@ export default function Sidebar({
                   onClick={(e) => e.stopPropagation()}
                   className="absolute right-0 top-full z-30 mt-1 w-44 animate-scale-in rounded-xl
                              border border-[var(--border)] bg-[var(--raised)] p-1.5
-                             shadow-[0_8px_30px_rgba(0,0,0,0.12)]"
+                             shadow-[var(--shadow-pop)]"
                 >
                   <button
                     onClick={() => {
@@ -356,7 +356,7 @@ export default function Sidebar({
             role="menu"
             className="absolute bottom-full left-3 right-3 mb-2 animate-scale-in rounded-xl border
                        border-[var(--border)] bg-[var(--raised)] p-1.5
-                       shadow-[0_8px_30px_rgba(0,0,0,0.12)]"
+                       shadow-[var(--shadow-pop)]"
           >
             {user.role === "admin" &&
               menuItem("Sampler", IconSliders, () => onNavigate("sampler"))}

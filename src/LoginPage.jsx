@@ -53,7 +53,7 @@ export default function LoginPage({ needsSetup, onSignedIn }) {
             autoFocus
             autoCapitalize="none"
             autoComplete="username"
-            className="w-full rounded-lg border border-[var(--border-strong)] bg-[var(--raised)]
+            className="w-full rounded-lg border border-[var(--border-strong)] bg-[var(--field)]
                        px-3.5 py-2.5 text-[15px] text-[var(--text)] max-md:text-[16px]
                        focus:border-[var(--focus)] focus:outline-none"
           />

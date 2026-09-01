@@ -1141,7 +1141,7 @@ export default function AienticChatShell({
             className="absolute right-4 top-3 z-20 flex max-w-sm animate-scale-in items-start gap-2
                        rounded-lg border border-[var(--danger-border)] bg-[var(--danger-bg)]
                        px-3 py-2.5 text-[13px] text-[var(--danger)]
-                       shadow-[0_8px_30px_rgba(0,0,0,0.12)] max-md:left-4 max-md:max-w-none"
+                       shadow-[var(--shadow-pop)] max-md:left-4 max-md:max-w-none"
           >
             <span className="min-w-0 flex-1">{error}</span>
             <button
@@ -1369,7 +1369,7 @@ export default function AienticChatShell({
             style={{ bottom: composerH + 12 }}
             className="absolute left-1/2 z-10 -translate-x-1/2 animate-scale-in rounded-full border
                        border-[var(--border)] bg-[var(--raised)] p-2.5 text-[var(--muted)]
-                       shadow-[0_2px_10px_rgba(0,0,0,0.15)] transition-colors
+                       shadow-[var(--shadow-pop)] transition-colors
                        hover:text-[var(--text)]"
           >
             <IconArrowDown className="h-[18px] w-[18px]" />
@@ -1422,7 +1422,7 @@ export default function AienticChatShell({
               ref={setCardRef}
               {...dragProps}
               className={`relative rounded-2xl border bg-[var(--raised)] p-2.5
-                          shadow-[0_1px_3px_rgba(0,0,0,0.04)] focus-within:border-[var(--focus)]
+                          shadow-[var(--shadow-card)] focus-within:border-[var(--focus)]
                           ${dragging
                             ? "border-[var(--focus)] border-dashed"
                             : "border-[var(--border-strong)]"}`}
@@ -1495,7 +1495,7 @@ export default function AienticChatShell({
                       <span
                         key={id}
                         className="flex animate-scale-in items-center gap-1 rounded-full border
-                                   border-[var(--border)] bg-[var(--panel)] py-0.5 pl-2 pr-1
+                                   border-[var(--border)] bg-[var(--hover)] py-0.5 pl-2 pr-1
                                    text-[length:var(--fs-xs)] text-[var(--text-soft)]"
                       >
                         <IconSparkles className="h-3 w-3 shrink-0" />
@@ -1549,7 +1549,7 @@ export default function AienticChatShell({
                           role="menu"
                           className="absolute bottom-full left-0 z-20 mb-2 w-64 animate-scale-in
                                      rounded-xl border border-[var(--border)] bg-[var(--raised)] p-1.5
-                                     shadow-[0_8px_30px_rgba(0,0,0,0.12)]"
+                                     shadow-[var(--shadow-pop)]"
                         >
                           {optional.map((skill) => (
                             <button
@@ -1592,7 +1592,7 @@ export default function AienticChatShell({
                         disabled={streaming}
                         title="Attach photos (JPEG, PNG or GIF)"
                         className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md
-                                   text-[var(--muted)] transition-colors hover:bg-[var(--panel)]
+                                   text-[var(--muted)] transition-colors hover:bg-[var(--hover)]
                                    disabled:opacity-50"
                       >
                         <IconPlus className="h-[18px] w-[18px]" />

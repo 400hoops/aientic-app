@@ -6,7 +6,25 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 /* One palette, two values each. Components reference the variables, so a
-   component almost never needs a dark: variant of its own. */
+   component almost never needs a dark: variant of its own — and no
+   component carries a colour of its own at all: there is no #hex, rgba()
+   or Tailwind palette class anywhere in src/*.jsx, so a theme change is a
+   change to this file and nothing else.
+ 
+   Which token goes where — the rules the components follow:
+ 
+     --bg          the page itself
+     --panel       a surface attached to the page: the sidebar, a table
+                   header, a well inside a card
+     --panel-2     a well inside a well (code blocks)
+     --raised      anything floating above the page: menus, dialogs, the
+                   composer card
+     --field       anything you type or choose in, on any surface, always
+                   with a --border-strong edge
+     --hover       any control's hover; --active, its selected state
+     --danger*     failure states only; --ok, the one green (a loaded model)
+     --scrim*      the veil behind a drawer, dialog or the lightbox
+     --shadow-*    card / pop / modal elevation, never an ad-hoc shadow */
 /* Plain grayscale — no warm tint. */
 :root {
   --bg: #ffffff;
@@ -25,6 +43,34 @@
   --danger: #9a3f36;
   --danger-bg: #f9eeec;
   --danger-border: #e2c3bf;
+  /* The one non-grey in the app: a model loaded in memory. */
+  --ok: #3f9a5c;
+
+  /* Every input, textarea and inset control, whatever surface it sits on:
+     white inside a panel, white inside a card, always with a --border-strong
+     edge to define it. One token so a field can't read as a different
+     material in two places. */
+  --field: #ffffff;
+
+  /* Anything the app dims the page behind: the phone drawer, a dialog, the
+     image lightbox. Was three different blacks. */
+  --scrim: rgb(0 0 0 / 0.4);
+  /* The image lightbox dims harder than a dialog does — the photo is the
+     only thing meant to be legible. */
+  --scrim-strong: rgb(0 0 0 / 0.78);
+  /* Chrome that sits *on* a scrim (the lightbox's close button). Identical
+     in both themes on purpose: it's always light-on-dark, whatever the app
+     around it is doing. */
+  --overlay-chip: rgb(255 255 255 / 0.14);
+  --overlay-chip-hover: rgb(255 255 255 / 0.26);
+  --overlay-fg: rgb(255 255 255 / 0.85);
+
+  /* Three elevations, in one place. Light mode carries them with a real
+     shadow; the dark values below lean on a lighter border instead, since a
+     black shadow over a black background lifts nothing. */
+  --shadow-card: 0 1px 3px rgb(0 0 0 / 0.04);
+  --shadow-pop: 0 8px 30px rgb(0 0 0 / 0.12);
+  --shadow-modal: 0 20px 60px rgb(0 0 0 / 0.25);
 }
 
 /* True black — OLED. --bg is pure #000 (actual black pixels off on an OLED
@@ -50,6 +96,19 @@
   --danger: #e0837c;
   --danger-bg: #170d0c;
   --danger-border: #3a201e;
+  --ok: #4ade80;
+
+  --field: #1a1a1a;
+  /* Heavier than light mode's: the page underneath is already near-black,
+     so a 40% veil barely separates the layers. */
+  --scrim: rgb(0 0 0 / 0.65);
+  --scrim-strong: rgb(0 0 0 / 0.85);
+
+  /* Blacker and deeper, plus a hairline of light around the edge — on an
+     OLED background the ring is what actually reads as "in front". */
+  --shadow-card: 0 1px 3px rgb(0 0 0 / 0.5);
+  --shadow-pop: 0 8px 30px rgb(0 0 0 / 0.7), 0 0 0 1px rgb(255 255 255 / 0.04);
+  --shadow-modal: 0 24px 70px rgb(0 0 0 / 0.8), 0 0 0 1px rgb(255 255 255 / 0.05);
 }
 
 @theme inline {

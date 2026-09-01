@@ -152,7 +152,7 @@ export default function SettingsDialog({
   };
 
   const field =
-    `w-full rounded-lg border border-[var(--border)] bg-[var(--raised)] px-3 py-2
+    `w-full rounded-lg border border-[var(--border-strong)] bg-[var(--field)] px-3 py-2
      text-[length:var(--fs-sm2)] text-[var(--text)] placeholder:text-[var(--faint)]
      focus:border-[var(--focus)] focus:outline-none`;
 
@@ -183,14 +183,14 @@ export default function SettingsDialog({
     <div
       // Click the backdrop to dismiss; clicks inside the card stop there.
       onMouseDown={(e) => e.target === e.currentTarget && onClose()}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 animate-fade-in"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--scrim)] p-4 animate-fade-in"
     >
       <div
         role="dialog"
         aria-modal="true"
         aria-label="Settings"
         className="max-h-full w-full max-w-lg overflow-y-auto rounded-2xl border border-[var(--border)]
-                   bg-[var(--panel)] shadow-[0_20px_60px_rgba(0,0,0,0.25)] animate-scale-in"
+                   bg-[var(--raised)] shadow-[var(--shadow-modal)] animate-scale-in"
       >
         <header className="flex items-center justify-between px-5 py-4">
           <h2 className="text-[length:var(--fs-md)]">Settings</h2>
@@ -257,8 +257,8 @@ export default function SettingsDialog({
           title="Default model"
           description="What a new chat starts on, remembered on this device."
         >
-          <div className="relative flex items-center rounded-lg border border-[var(--border)]
-                          bg-[var(--raised)] px-2.5 py-1.5">
+          <div className="relative flex items-center rounded-lg border border-[var(--border-strong)]
+                          bg-[var(--field)] px-2.5 py-1.5">
             <ModelPicker
               models={models}
               value={modelId}
@@ -284,7 +284,7 @@ export default function SettingsDialog({
                 <li
                   key={m.id}
                   className="group flex items-start gap-2 rounded-lg border border-[var(--border)]
-                             bg-[var(--raised)] px-3 py-2"
+                             bg-[var(--panel)] px-3 py-2"
                 >
                   <span className="min-w-0 flex-1 whitespace-pre-wrap break-words
                                    text-[length:var(--fs-sm2)]">
@@ -345,7 +345,7 @@ export default function SettingsDialog({
                 <li
                   key={skill.id}
                   className="group flex items-start gap-2 rounded-lg border border-[var(--border)]
-                             bg-[var(--raised)] px-3 py-2"
+                             bg-[var(--panel)] px-3 py-2"
                 >
                   <IconSparkles className="mt-0.5 h-[15px] w-[15px] shrink-0 text-[var(--muted)]" />
                   <button

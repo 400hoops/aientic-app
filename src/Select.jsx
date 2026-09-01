@@ -23,7 +23,7 @@ function StatusDot({ status }) {
       title="Loaded in memory"
       aria-label="Loaded in memory"
       role="img"
-      className="h-[7px] w-[7px] shrink-0 rounded-full bg-[#4ade80]"
+      className="h-[7px] w-[7px] shrink-0 rounded-full bg-[var(--ok)]"
     />
   );
 }
@@ -214,7 +214,7 @@ export default function Select({
                   }
             }
             className={`z-50 overflow-hidden rounded-xl border border-[var(--border)]
-                     bg-[var(--raised)] shadow-[0_12px_32px_rgba(0,0,0,0.14)]
+                     bg-[var(--raised)] shadow-[var(--shadow-pop)]
                      animate-scale-in ${placement === "top" ? "origin-bottom" : "origin-top"}`}
           >
             {searchable && (

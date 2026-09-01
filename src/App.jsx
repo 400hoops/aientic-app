@@ -429,7 +429,7 @@ export default function App() {
         <div
           onClick={() => setSidebarOpen(false)}
           aria-hidden="true"
-          className={`fixed inset-0 z-40 bg-black/35 transition-opacity duration-300
+          className={`fixed inset-0 z-40 bg-[var(--scrim)] transition-opacity duration-300
                       motion-reduce:transition-none
                       ${sidebarOpen ? "opacity-100" : "pointer-events-none opacity-0"}`}
         />
@@ -441,7 +441,7 @@ export default function App() {
           className={`fixed inset-y-0 left-0 z-50 w-[268px] max-w-[86vw]
                       transition-transform duration-300 ease-drawer
                       motion-reduce:transition-none
-                      ${sidebarOpen ? "translate-x-0 shadow-xl" : "-translate-x-full shadow-none"}`}
+                      ${sidebarOpen ? "translate-x-0 shadow-[var(--shadow-modal)]" : "-translate-x-full shadow-none"}`}
         >
           {sidebar}
         </div>

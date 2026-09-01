@@ -115,7 +115,7 @@ function Lightbox({ src, onClose }) {
       aria-label="Image preview"
       onClick={onClose}
       className="fixed inset-0 z-50 flex animate-fade-in touch-none select-none
-                 items-center justify-center bg-black/70 p-4"
+                 items-center justify-center bg-[var(--scrim-strong)] p-4"
     >
       <img
         ref={imgRef}
@@ -145,8 +145,9 @@ function Lightbox({ src, onClose }) {
         }}
         title="Close"
         aria-label="Close preview"
-        className="absolute right-4 top-4 rounded-full bg-black/50 p-2
-                   text-white/80 hover:bg-black/70 hover:text-white"
+        className="absolute right-4 top-4 rounded-full bg-[var(--overlay-chip)] p-2
+                   text-[var(--overlay-fg)] backdrop-blur-sm
+                   hover:bg-[var(--overlay-chip-hover)]"
       >
         <IconX className="h-5 w-5" />
       </button>
