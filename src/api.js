@@ -65,6 +65,28 @@ export const editMessage = (conversationId, messageId, content) =>
     body: { content, truncate: true },
   });
 
+/**
+ * A Claude data export — the zip, or the conversations.json inside it —
+ * sent as raw bytes rather than JSON, so a large archive isn't inflated by
+ * a third on the way up.
+ */
+export async function importChats(file) {
+  const res = await fetch("/api/conversations/import", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/octet-stream" },
+    body: file,
+  });
+  const payload = await res.json().catch(() => null);
+  if (!res.ok)
+    throw new Error(payload?.error || `Import failed (${res.status})`);
+  return payload;
+}
+
+/** Download one chat as Markdown or JSON. */
+export const exportChatUrl = (id, format = "md") =>
+  `/api/conversations/${id}/export?format=${format}`;
+
 /* ---------- admin -------------------------------------------------------- */
 
 export const listEndpoints = () => request("/admin/endpoints");

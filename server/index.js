@@ -19,6 +19,15 @@ import cookieParser from "cookie-parser";
 
 import { db, save, uid, dataDir } from "./storage.js";
 import {
+  touchConversation,
+  removeConversationFiles,
+  syncAllConversations,
+  conversationJson,
+  conversationMarkdown,
+  fileStem,
+} from "./chatFiles.js";
+import { parseUpload } from "./claudeImport.js";
+import {
   attachUser,
   requireAuth,
   requireAdmin,
@@ -667,6 +676,8 @@ app.delete("/api/admin/users/:id", requireAdmin, (req, res) => {
   if (index === -1) return bad(res, 404, "No such account");
 
   const [removed] = db.users.splice(index, 1);
+  for (const c of db.conversations)
+    if (c.userId === removed.id) removeConversationFiles(c.id);
   db.conversations = db.conversations.filter((c) => c.userId !== removed.id);
   for (const [token, session] of Object.entries(db.sessions))
     if (session.userId === removed.id) delete db.sessions[token];
@@ -724,6 +735,7 @@ app.post("/api/conversations", requireAuth, (req, res) => {
   };
   db.conversations.push(convo);
   save();
+  touchConversation(convo);
   ok(res, { conversation: convo });
 });
 
@@ -740,6 +752,7 @@ app.patch("/api/conversations/:id", requireAuth, (req, res) => {
   }
   convo.updatedAt = Date.now();
   save();
+  touchConversation(convo);
   ok(res, { conversation: summary(convo) });
 });
 
@@ -748,6 +761,7 @@ app.delete("/api/conversations/:id", requireAuth, (req, res) => {
   if (!convo) return bad(res, 404, "No such conversation");
   db.conversations = db.conversations.filter((c) => c.id !== convo.id);
   save();
+  removeConversationFiles(convo.id);
   ok(res, {});
 });
 
@@ -774,6 +788,7 @@ app.patch("/api/conversations/:id/messages/:messageId", requireAuth, (req, res) 
   }
   convo.updatedAt = Date.now();
   save();
+  touchConversation(convo);
   ok(res, { conversation: convo });
 });
 
@@ -783,7 +798,79 @@ app.delete("/api/conversations/:id/messages/:messageId", requireAuth, (req, res)
   convo.messages = convo.messages.filter((m) => m.id !== req.params.messageId);
   convo.updatedAt = Date.now();
   save();
+  touchConversation(convo);
   ok(res, { conversation: convo });
+});
+
+/* ---------- import / export ---------------------------------------------- */
+
+/**
+ * Take a Claude data export (Settings → Privacy → Export data) and turn it
+ * into conversations on this account.
+ *
+ * The zip Anthropic mails out can be uploaded whole, or just the
+ * `conversations.json` from inside it; a chat this app wrote to
+ * `data/chats/` round-trips too. The body is raw bytes rather than JSON so
+ * a 200 MB archive isn't base64'd on the way in.
+ */
+app.post(
+  "/api/conversations/import",
+  requireAuth,
+  express.raw({ type: () => true, limit: "200mb" }),
+  (req, res) => {
+    // express.json (mounted globally) will have parsed the body already if
+    // the upload arrived as application/json; put it back as bytes.
+    const buffer = Buffer.isBuffer(req.body)
+      ? req.body
+      : req.body && typeof req.body === "object"
+        ? Buffer.from(JSON.stringify(req.body))
+        : Buffer.alloc(0);
+    if (!buffer.length) return bad(res, 400, "No file was uploaded");
+
+    let imported;
+    try {
+      imported = parseUpload(buffer, req.user.id);
+    } catch (err) {
+      return bad(res, 400, err.message);
+    }
+    if (!imported.length)
+      return bad(res, 400, "No conversations with any messages in that file");
+
+    // Imported chats have no endpoint of their own — reading one is fine,
+    // and continuing it picks up whatever model is configured now.
+    const fallback = db.endpoints[0]?.id || null;
+    for (const convo of imported) {
+      convo.endpointId = fallback;
+      db.conversations.push(convo);
+      touchConversation(convo);
+    }
+    save();
+    ok(res, {
+      imported: imported.length,
+      messages: imported.reduce((n, c) => n + c.messages.length, 0),
+      conversations: db.conversations
+        .filter((c) => c.userId === req.user.id)
+        .sort((a, b) => b.updatedAt - a.updatedAt)
+        .map(summary),
+    });
+  }
+);
+
+/** One conversation as a file — the same pair kept in `data/chats/`. */
+app.get("/api/conversations/:id/export", requireAuth, (req, res) => {
+  const convo = owned(req);
+  if (!convo) return bad(res, 404, "No such conversation");
+  const markdown = req.query.format === "md";
+  res.setHeader(
+    "Content-Disposition",
+    `attachment; filename="${fileStem(convo)}.${markdown ? "md" : "json"}"`
+  );
+  res.type(markdown ? "text/markdown" : "application/json");
+  res.send(
+    markdown
+      ? conversationMarkdown(convo)
+      : JSON.stringify(conversationJson(convo), null, 2)
+  );
 });
 
 /* ---------- generation --------------------------------------------------- */
@@ -850,6 +937,7 @@ app.post("/api/conversations/:id/stream", requireAuth, async (req, res) => {
 
   convo.updatedAt = Date.now();
   save();
+  touchConversation(convo);
 
   await streamCompletion({
     res,
@@ -911,6 +999,9 @@ server.listen(PORT, "0.0.0.0", () => {
     `[aientic] listening on http${tls ? "s" : ""}://0.0.0.0:${PORT}`
   );
   console.log(`[aientic] data directory: ${dataDir}`);
+  // Bring data/chats/ up to date with the store, so a directory that
+  // predates this mirror (or was cleaned out) fills itself back in.
+  syncAllConversations();
   if (needsBootstrap())
     console.log("[aientic] no accounts yet — open the app to create the admin");
 });

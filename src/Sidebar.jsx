@@ -1,4 +1,7 @@
+import { useRef, useState } from "react";
+
 import {
+  IconDownload,
   IconLogOut,
   IconMoon,
   IconPanel,
@@ -8,6 +11,7 @@ import {
   IconSliders,
   IconSun,
   IconTrash,
+  IconUpload,
 } from "./Icons.jsx";
 import Wordmark from "./Wordmark.jsx";
 import { initial } from "./format.js";
@@ -27,6 +31,7 @@ export default function Sidebar({
   theme,
   onFilter,
   onNewChat,
+  onImport,
   onOpen,
   onDelete,
   onNavigate,
@@ -34,6 +39,26 @@ export default function Sidebar({
   onSignOut,
   onHide,
 }) {
+  const fileInput = useRef(null);
+  // "Importing…" while the upload is in flight, then the result — a Claude
+  // export can be tens of megabytes, so the button has to say something.
+  const [status, setStatus] = useState(null);
+
+  const chooseFile = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = ""; // so picking the same file twice still fires
+    if (!file) return;
+    setStatus({ busy: true, text: "Importing…" });
+    try {
+      const result = await onImport(file);
+      setStatus({
+        text: `Imported ${result.imported} chat${result.imported === 1 ? "" : "s"}.`,
+      });
+    } catch (err) {
+      setStatus({ error: true, text: err.message });
+    }
+  };
+
   const navItem = (key, label, Glyph, onClick) => (
     <button
       onClick={onClick}
@@ -72,6 +97,32 @@ export default function Sidebar({
           <IconPlus className="h-[18px] w-[18px] shrink-0" />
           New chat
         </button>
+        <button
+          onClick={() => fileInput.current?.click()}
+          disabled={status?.busy}
+          title="Import a Claude data export (the zip, or conversations.json)"
+          className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-[length:var(--fs-base)]
+                     text-[var(--text-soft)] hover:bg-[var(--hover)] disabled:opacity-60"
+        >
+          <IconUpload className="h-[18px] w-[18px] shrink-0" />
+          {status?.busy ? "Importing…" : "Import chats"}
+        </button>
+        <input
+          ref={fileInput}
+          type="file"
+          accept=".zip,.json,application/zip,application/json"
+          onChange={chooseFile}
+          className="hidden"
+        />
+        {status && !status.busy && (
+          <p
+            className={`px-2.5 text-[length:var(--fs-xs)] ${
+              status.error ? "text-[var(--danger)]" : "text-[var(--muted)]"
+            }`}
+          >
+            {status.text}
+          </p>
+        )}
         {user.role === "admin" &&
           navItem("sampler", "Sampler", IconSliders, () => onNavigate("sampler"))}
         {user.role === "admin" &&
@@ -130,6 +181,17 @@ export default function Sidebar({
             <span className="truncate text-[length:var(--fs-sm2)] text-[var(--text-soft)]">
               {c.title}
             </span>
+            <a
+              href={`/api/conversations/${c.id}/export?format=md`}
+              download
+              onClick={(e) => e.stopPropagation()}
+              title="Download as Markdown"
+              className="shrink-0 rounded p-1 text-[var(--faint)] opacity-0 transition outline-none
+                         hover:text-[var(--text)] group-hover:opacity-100
+                         focus-visible:opacity-100 max-md:opacity-100"
+            >
+              <IconDownload className="h-[14px] w-[14px]" />
+            </a>
             <button
               onClick={(e) => {
                 e.stopPropagation();

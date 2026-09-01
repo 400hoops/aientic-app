@@ -11,6 +11,7 @@
  * re-attach to a run already in progress. Only an explicit stop aborts it.
  */
 import { db, save, uid } from "./storage.js";
+import { touchConversation } from "./chatFiles.js";
 import {
   chatUrl,
   authHeaders,
@@ -222,6 +223,7 @@ export async function streamCompletion({
   };
   conversation.messages.push(assistant);
   save();
+  touchConversation(conversation);
 
   const gen = {
     assistant,
@@ -366,16 +368,26 @@ export async function streamCompletion({
         if (Date.now() - persistAt > 2000) {
           persistAt = Date.now();
           save();
+          touchConversation(conversation);
         }
       }
     }
 
+    // The timestamp under an answer is when the answer *finished*, not when
+    // the placeholder was pushed — a two-minute generation stamped at its
+    // start reads as older than the question it answers.
+    assistant.createdAt = Date.now();
     conversation.updatedAt = Date.now();
     save();
+    touchConversation(conversation);
     sse(gen, "done", { message: assistant });
   } catch (err) {
+    // Same on the way out: a stopped or failed run keeps whatever streamed,
+    // so that partial answer is stamped when it stopped.
+    assistant.createdAt = Date.now();
     conversation.updatedAt = Date.now();
     save();
+    touchConversation(conversation);
 
     if (timedOut) {
       // The connect watchdog fired, not a user Stop.
@@ -384,6 +396,7 @@ export async function streamCompletion({
           (m) => m.id !== assistant.id
         );
         save();
+        touchConversation(conversation);
       }
       sse(gen, "error", {
         message: `${endpoint.label} took too long to start responding (no reply within ${Math.round(FIRST_RESPONSE_TIMEOUT_MS / 1000)} s).`,
@@ -398,6 +411,7 @@ export async function streamCompletion({
           (m) => m.id !== assistant.id
         );
         save();
+        touchConversation(conversation);
       }
       sse(gen, "error", { message });
     }

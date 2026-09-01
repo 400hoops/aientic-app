@@ -174,6 +174,37 @@ whatever — and is hashed to the actual key unless it is exactly 16, 24 or
 never sent to the browser — the model picker only ever sees a label and a
 note.
 
+Each conversation is also mirrored to its own pair of files under
+`data/chats/`, named by date, title and id:
+
+```
+data/chats/2025-06-01-a-question-about-mice-mtj2wm.json
+data/chats/2025-06-01-a-question-about-mice-mtj2wm.md
+```
+
+The JSON is the full fidelity copy (roles, reasoning, attachments,
+timestamps); the `.md` is the same chat as readable Markdown with YAML front
+matter. Both are rewritten whenever the chat changes and deleted with it, and
+the directory is rebuilt from `data.json` at startup, so it can be safely
+thrown away. Nothing reads them back except the importer, which means
+`data.json` is still the only source of truth. The download icon on a chat in
+the sidebar hands you the Markdown; `/api/conversations/:id/export?format=json`
+gives the JSON.
+
+## Importing from Claude
+
+**Import chats** in the sidebar takes a Claude data export — the zip that
+Anthropic mails you after Settings → Privacy → Export data, or just the
+`conversations.json` from inside it. You can also drop the file straight onto
+the composer, or paste it there. Every conversation with at least one message
+becomes a chat on your account, keeping its title, order and timestamps;
+thinking blocks become reasoning, attachments keep their extracted text, and
+tool calls are rendered as JSON blocks. Imported chats have no model of their
+own — carrying one on picks up whatever is configured now. Ids are freshly
+minted, so importing the same export twice makes a second copy rather than
+overwriting anything. Files this app itself wrote to `data/chats/` can be
+imported back the same way.
+
 ## Security posture
 
 This is built for a trusted network: a LAN, or a tailnet. `/api/auth/login`

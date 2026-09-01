@@ -95,6 +95,7 @@ export default function AienticChatShell({
   onConversationRenamed,
   onConversationNotFound,
   onConversationsChanged,
+  onImportChats,
   onConversationDeleted,
   sidebarOpen,
   onShowSidebar,
@@ -110,6 +111,13 @@ export default function AienticChatShell({
   const [images, setImages] = useState([]);
   const [preview, setPreview] = useState(null); // pending: { id, url (data URL) }
   const [imgError, setImgError] = useState(null);
+  // Depth counter, not a boolean: dragging over a child fires dragleave on
+  // the parent, and a boolean would flicker the highlight off mid-drag.
+  const dragDepth = useRef(0);
+  const [dragging, setDragging] = useState(false);
+  // Import progress and its result. Separate from imgError: "Imported 240
+  // chats" is good news, and shouldn't be painted in the danger colour.
+  const [notice, setNotice] = useState(null);
   const fileRef = useRef(null);
 
   const abortRef = useRef(null);
@@ -574,6 +582,68 @@ export default function AienticChatShell({
     }
     if (next.length) setImages((prev) => [...prev, ...next]);
     setImgError(problem);
+  };
+
+  /**
+   * Files arriving by paste or drop, which can be either kind: photos for
+   * the model, or a Claude data export to turn into history. The export is
+   * the only non-image we accept, and it's recognised the same way the
+   * server does — a .zip or a .json.
+   */
+  const acceptFiles = async (list) => {
+    const files = [...list];
+    if (!files.length) return;
+    setNotice(null);
+
+    const isExport = (f) =>
+      /\.(zip|json)$/i.test(f.name) || f.type === "application/zip";
+    const exports_ = onImportChats ? files.filter(isExport) : [];
+    const rest = files.filter((f) => !exports_.includes(f));
+
+    if (rest.length) await addFiles(rest);
+
+    for (const file of exports_) {
+      setNotice(`Importing ${file.name}…`);
+      try {
+        const result = await onImportChats(file);
+        setNotice(
+          `Imported ${result.imported} chat${result.imported === 1 ? "" : "s"} from ${file.name}.`
+        );
+      } catch (err) {
+        setNotice(null);
+        setImgError(err.message);
+      }
+    }
+  };
+
+  const onPaste = (e) => {
+    const files = [...(e.clipboardData?.files || [])];
+    if (!files.length) return; // plain text pastes stay untouched
+    e.preventDefault();
+    acceptFiles(files);
+  };
+
+  const onDrop = (e) => {
+    e.preventDefault();
+    dragDepth.current = 0;
+    setDragging(false);
+    acceptFiles(e.dataTransfer?.files || []);
+  };
+
+  const dragProps = {
+    onDragEnter: (e) => {
+      if (![...(e.dataTransfer?.types || [])].includes("Files")) return;
+      dragDepth.current += 1;
+      setDragging(true);
+    },
+    onDragOver: (e) => {
+      if ([...(e.dataTransfer?.types || [])].includes("Files")) e.preventDefault();
+    },
+    onDragLeave: () => {
+      dragDepth.current = Math.max(0, dragDepth.current - 1);
+      if (!dragDepth.current) setDragging(false);
+    },
+    onDrop,
   };
 
   const removeImage = (id) =>
@@ -1044,15 +1114,25 @@ export default function AienticChatShell({
           <div className="pointer-events-auto relative mx-auto max-w-3xl">
             <div
               ref={setCardRef}
-              className="rounded-2xl border border-[var(--border-strong)] bg-[var(--raised)] p-2.5
-                          shadow-[0_1px_3px_rgba(0,0,0,0.04)]
-                          focus-within:border-[var(--focus)]"
+              {...dragProps}
+              className={`relative rounded-2xl border bg-[var(--raised)] p-2.5
+                          shadow-[0_1px_3px_rgba(0,0,0,0.04)] focus-within:border-[var(--focus)]
+                          ${dragging
+                            ? "border-[var(--focus)] border-dashed"
+                            : "border-[var(--border-strong)]"}`}
             >
+              {dragging && (
+                <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center
+                                rounded-2xl bg-[var(--raised)]/90 text-[length:var(--fs-sm)] text-[var(--text-soft)]">
+                  Drop images, or a Claude export, here
+                </div>
+              )}
               <textarea
                 ref={taRef}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={onKeyDown}
+                onPaste={onPaste}
                 rows={1}
                 placeholder={`Message ${activeModel?.label ?? "…"}`}
                 className="w-full resize-none bg-transparent px-2 py-1.5 text-[length:var(--fs-md)] leading-[1.6]
@@ -1088,6 +1168,12 @@ export default function AienticChatShell({
               {imgError && (
                 <p className="px-1 pt-1.5 text-[12px] text-[var(--danger)]">
                   {imgError}
+                </p>
+              )}
+
+              {notice && (
+                <p className="px-1 pt-1.5 text-[12px] text-[var(--muted)]">
+                  {notice}
                 </p>
               )}
 

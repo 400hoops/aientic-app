@@ -130,6 +130,17 @@ export default function App() {
     []
   );
 
+  /**
+   * A Claude data export, uploaded from the sidebar or dropped on the
+   * composer. The server answers with the new history, so the list updates
+   * without a second round trip.
+   */
+  const importChats = useCallback(async (file) => {
+    const result = await api.importChats(file);
+    setConversations(result.conversations);
+    return result;
+  }, []);
+
   const refreshModels = useCallback(
     () =>
       api
@@ -318,6 +329,7 @@ export default function App() {
       theme={theme}
       onFilter={setFilter}
       onNewChat={newChat}
+      onImport={importChats}
       onOpen={openChat}
       onDelete={removeConversation}
       onNavigate={navigate}
@@ -391,6 +403,7 @@ export default function App() {
             )
           }
           onConversationsChanged={refreshConversations}
+          onImportChats={importChats}
           onConversationDeleted={removeConversation}
           // A conversation id that will never resolve (a stale bookmark, a
           // link from before a fresh install) — nothing to delete on the
