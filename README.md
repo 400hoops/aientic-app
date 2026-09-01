@@ -191,6 +191,20 @@ thrown away. Nothing reads them back except the importer, which means
 the sidebar hands you the Markdown; `/api/conversations/:id/export?format=json`
 gives the JSON.
 
+## Settings, and what lives where
+
+The sidebar holds the two ways to start a conversation and the history
+itself; everything you configure lives behind your name at the bottom.
+**Settings** covers your username and password, the model new chats start
+on, memory, skills, the theme, and importing history. **Admin** — accounts
+and model endpoints — and the sampler are admin-only: they're absent from
+the menu for a normal account, a typed `/admin` sends it back to the chat,
+and every `/api/admin` route refuses it server-side regardless.
+
+Chats can be pinned from the `…` on their row, which gives them their own
+section above Recents. Pinning deliberately doesn't touch the chat's
+updated time, so a pinned chat doesn't jump around when you use it.
+
 ## Importing from Claude
 
 **Import chats** in the sidebar takes a Claude data export — the zip that

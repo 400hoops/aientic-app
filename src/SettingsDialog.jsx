@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import * as api from "./api.js";
 import {
   IconPlus,
+  IconSliders,
   IconSparkles,
   IconTrash,
   IconUpload,
@@ -21,6 +22,7 @@ import ModelPicker from "./ModelPicker.jsx";
  */
 export default function SettingsDialog({
   user,
+  onNavigate,
   models,
   modelId,
   theme,
@@ -446,6 +448,25 @@ export default function SettingsDialog({
           )}
           {note(skillNote)}
         </Section>
+
+        {user.role === "admin" && (
+          <Section
+            title="Model sampler"
+            description="Temperature, top_p and the system prompt for each model — enforced server-side for everyone who uses it, which is why it's admin-only and lives on its own page."
+          >
+            <button
+              onClick={() => {
+                onClose();
+                onNavigate("sampler");
+              }}
+              className="flex items-center gap-2 rounded-lg border border-[var(--border)] px-3 py-1.5
+                         text-[length:var(--fs-sm)] hover:bg-[var(--hover)]"
+            >
+              <IconSliders className="h-[16px] w-[16px]" />
+              Open sampler
+            </button>
+          </Section>
+        )}
 
         <Section title="Appearance">
           <button

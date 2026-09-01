@@ -18,6 +18,7 @@ import {
   Moon,
   PanelLeft,
   Pencil,
+  Pin,
   Plus,
   RotateCw,
   Search,
@@ -51,6 +52,7 @@ export const IconMoon = thin(Moon, "IconMoon");
 export const IconMore = thin(MoreHorizontal, "IconMore");
 export const IconPanel = thin(PanelLeft, "IconPanel");
 export const IconPencil = thin(Pencil, "IconPencil");
+export const IconPin = thin(Pin, "IconPin");
 export const IconPlus = thin(Plus, "IconPlus");
 export const IconRefresh = thin(RotateCw, "IconRefresh");
 export const IconSearch = thin(Search, "IconSearch");

@@ -735,6 +735,7 @@ const summary = (c) => ({
   title: c.title,
   endpointId: c.endpointId,
   skillIds: c.skillIds || [],
+  pinned: !!c.pinned,
   createdAt: c.createdAt,
   updatedAt: c.updatedAt,
 });
@@ -847,15 +848,19 @@ app.post("/api/conversations", requireAuth, (req, res) => {
 app.patch("/api/conversations/:id", requireAuth, (req, res) => {
   const convo = owned(req);
   if (!convo) return bad(res, 404, "No such conversation");
-  const { title, endpointId } = req.body || {};
+  const { title, endpointId, pinned } = req.body || {};
   if (typeof title === "string" && title.trim())
     convo.title = title.trim().slice(0, MAX_LEN.title);
+  // Pinning is not an edit of the conversation, so it deliberately doesn't
+  // touch updatedAt below — a chat you pin shouldn't jump to the top of
+  // "Recents" as though you'd just used it.
+  if (typeof pinned === "boolean") convo.pinned = pinned;
   if (endpointId) {
     const endpoint = db.endpoints.find((e) => e.id === endpointId);
     if (!endpoint) return bad(res, 400, "That model is no longer configured");
     convo.endpointId = endpoint.id;
   }
-  convo.updatedAt = Date.now();
+  if (title !== undefined || endpointId !== undefined) convo.updatedAt = Date.now();
   save();
   touchConversation(convo);
   ok(res, { conversation: summary(convo) });

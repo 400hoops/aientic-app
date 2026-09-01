@@ -59,6 +59,9 @@ export const createConversation = (endpointId) =>
   request("/conversations", { method: "POST", body: { endpointId } });
 export const renameConversation = (id, title) =>
   request(`/conversations/${id}`, { method: "PATCH", body: { title } });
+/** Pin a chat to the top of the sidebar (or unpin it). */
+export const pinConversation = (id, pinned) =>
+  request(`/conversations/${id}`, { method: "PATCH", body: { pinned } });
 export const deleteConversation = (id) =>
   request(`/conversations/${id}`, { method: "DELETE" });
 export const deleteMessage = (conversationId, messageId) =>

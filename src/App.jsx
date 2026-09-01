@@ -80,6 +80,9 @@ export default function App() {
   // Search results, which carry a snippet the plain list doesn't have.
   const [matches, setMatches] = useState([]);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // The last rename made from the sidebar, passed down so an open chat's
+  // header follows it.
+  const [renamed, setRenamed] = useState(null);
   const [activeId, setActiveId] = useState(initialRoute.activeId);
 
   const user = session?.user ?? null;
@@ -292,10 +295,25 @@ export default function App() {
     }
   }, [user, session]);
 
+  // Admin and the sampler are admin-only everywhere they can be reached
+  // from: the account menu doesn't offer them, the settings pane doesn't
+  // show the sampler, and a normal account that types /admin — or returns
+  // to a bookmark from when it *was* an admin — is sent back to the chat,
+  // URL and all, so a refresh doesn't land there again. The server refuses
+  // every /api/admin route on its own; this is the UI half of the same rule.
+  const adminOnly = view === "sampler" || view === "admin";
+  useEffect(() => {
+    if (adminOnly && user && user.role !== "admin") setView("chat");
+  }, [adminOnly, user]);
+
   const closeOnPhone = () => isNarrowViewport() && setSidebarOpen(false);
 
-  const openChat = (id) => {
+  // messageId is set when the row came from a search result: the chat opens
+  // scrolled to the line that matched rather than at its end.
+  const [highlightMessage, setHighlightMessage] = useState(null);
+  const openChat = (id, messageId = null) => {
     setActiveId(id);
+    setHighlightMessage(messageId ? { conversationId: id, messageId } : null);
     setView("chat");
     closeOnPhone();
   };
@@ -327,13 +345,29 @@ export default function App() {
     setConversations((prev) =>
       prev.map((c) => (c.id === convo.id ? { ...c, title: next } : c))
     );
+    // Bumped so the open chat picks the new title up in its header — the
+    // shell holds its own copy of the conversation, and the sidebar row
+    // changing underneath it isn't something it can see.
+    setRenamed({ id: convo.id, title: next });
     await api.renameConversation(convo.id, next).catch(() => refreshConversations());
+  };
+
+  const pinChat = async (convo, pinned) => {
+    setConversations((prev) =>
+      prev.map((c) => (c.id === convo.id ? { ...c, pinned } : c))
+    );
+    await api.pinConversation(convo.id, pinned).catch(() => refreshConversations());
   };
 
   const removeConversation = async (id) => {
     await api.deleteConversation(id).catch(() => {});
     setConversations((prev) => prev.filter((c) => c.id !== id));
-    if (id === activeId) setActiveId(null);
+    // Functional, not `if (id === activeId)`: this handler is also held by
+    // the chat shell, which can be running a copy from before the chat it
+    // is deleting even existed — that closure's activeId is stale, and the
+    // comparison silently failed, leaving the app pointed at a chat that
+    // was gone.
+    setActiveId((current) => (current === id ? null : current));
   };
 
   const signOut = async () => {
@@ -359,12 +393,8 @@ export default function App() {
     );
   }
 
-  // Sampler and Admin don't exist for non-admins — a typed URL, a stale
-  // bookmark, or a live demotion shouldn't leave them on a blank pane.
   const effectiveView =
-    (view === "sampler" || view === "admin") && user.role !== "admin"
-      ? "chat"
-      : view;
+    adminOnly && user?.role !== "admin" ? "chat" : view;
 
   const visible = filter.trim() ? matches : conversations;
 
@@ -384,6 +414,7 @@ export default function App() {
       onOpen={openChat}
       onDelete={removeConversation}
       onRename={renameConversation}
+      onPin={pinChat}
       onNavigate={navigate}
       onToggleTheme={onToggleTheme}
       onSignOut={signOut}
@@ -400,6 +431,7 @@ export default function App() {
       onModelChange={setModelId}
       onToggleTheme={onToggleTheme}
       onImport={importChats}
+      onNavigate={navigate}
       onUserChanged={(next) => setSession((prev) => ({ ...prev, user: next }))}
       onClose={() => setSettingsOpen(false)}
     />
@@ -457,6 +489,8 @@ export default function App() {
           modelsLoaded={modelsLoaded}
           modelStatus={modelStatus}
           conversationId={activeId}
+          highlightMessage={highlightMessage}
+          renamed={renamed}
           modelId={modelId}
           onModelChange={setModelId}
           onConversationCreated={(convo) => {

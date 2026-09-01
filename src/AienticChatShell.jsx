@@ -115,6 +115,8 @@ export default function AienticChatShell({
   onConversationNotFound,
   onConversationsChanged,
   onImportChats,
+  highlightMessage = null,
+  renamed = null,
   privateMode = false,
   onConversationDeleted,
   sidebarOpen,
@@ -193,6 +195,12 @@ export default function AienticChatShell({
   // True from a send until the reader scrolls away: the view holds the
   // question at the top instead of chasing the answer's tail.
   const pinnedRef = useRef(false);
+  // The last turn attempted, for the Retry on a failure notice.
+  const lastRunRef = useRef(null);
+  // Set when a failure discards the conversation it was in: the loader
+  // effect below clears the error on every conversation change, and this
+  // one is the change — the message has to outlive it.
+  const keepErrorRef = useRef(false);
   const taRef = useRef(null);
   const idRef = useRef(conversationId);
   // The conversation this component is already streaming itself. Creating a
@@ -248,7 +256,8 @@ export default function AienticChatShell({
 
   useEffect(() => {
     idRef.current = conversationId;
-    setError(null);
+    if (keepErrorRef.current) keepErrorRef.current = false;
+    else setError(null);
     setEditing(null);
 
     if (privateMode) {
@@ -464,6 +473,40 @@ export default function AienticChatShell({
     pinAnchorToTop("smooth");
   }, [messages.length, conversation?.id, scrollToBottom, pinAnchorToTop]);
 
+  /**
+   * Opened from a search result: put the line that matched in the middle of
+   * the screen instead of dropping in at the end of the chat. The flash is
+   * what makes it findable — in a wall of text, "it's on screen somewhere"
+   * isn't an answer.
+   */
+  const [flash, setFlash] = useState(null);
+  useEffect(() => {
+    const target = highlightMessage;
+    if (!target || conversation?.id !== target.conversationId) return;
+    if (!messages.some((m) => m.id === target.messageId)) return;
+
+    const node = document.querySelector(
+      `[data-message-id="${CSS.escape(target.messageId)}"]`
+    );
+    if (!node) return;
+    // Breaking the follow first: this is a deliberate move away from the
+    // bottom, and the settle effect would otherwise drag it straight back.
+    followRef.current = false;
+    pinnedRef.current = false;
+    node.scrollIntoView({ block: "center", behavior: "auto" });
+    setFlash(target.messageId);
+    const timer = setTimeout(() => setFlash(null), 1600);
+    return () => clearTimeout(timer);
+  }, [highlightMessage, conversation?.id, messages]);
+
+  // A rename from the sidebar, applied to the copy this component holds.
+  useEffect(() => {
+    if (!renamed) return;
+    setConversation((prev) =>
+      prev && prev.id === renamed.id ? { ...prev, title: renamed.title } : prev
+    );
+  }, [renamed]);
+
   const tail = messages[messages.length - 1];
   useEffect(() => {
     if (!streaming || !followRef.current) return;
@@ -652,6 +695,7 @@ export default function AienticChatShell({
 
   const run = useCallback(
     async (convoId, payload) => {
+      lastRunRef.current = { convoId, payload };
       ownStreamRef.current = convoId;
       setStreaming(true);
       setError(null);
@@ -701,6 +745,27 @@ export default function AienticChatShell({
                 }
               : prev,
           );
+          // The chat was created for this turn and the request never
+          // landed — but "never landed" isn't always true (a stream can die
+          // after the server has stored the question), so ask before
+          // throwing anything away. An empty row in the sidebar is litter
+          // from a failure; one holding a question is the question.
+          if (payload.discardIfEmpty && !payload.private) {
+            const empty = await api
+              .getConversation(convoId)
+              .then((res) => res.conversation.messages.length === 0)
+              .catch(() => false);
+            if (empty) {
+              keepErrorRef.current = true;
+              onConversationDeleted?.(convoId);
+              setConversation(null);
+              lastRunRef.current = null;
+              // Nothing was kept, so give the turn back to the composer
+              // rather than leaving the reader to retype it.
+              setInput(payload.restore?.text || "");
+              setImages(payload.restore?.attached || []);
+            }
+          }
         }
       } finally {
         if (ownStreamRef.current === convoId) ownStreamRef.current = null;
@@ -709,7 +774,7 @@ export default function AienticChatShell({
         onConversationsChanged();
       }
     },
-    [onConversationsChanged, streamHandlers],
+    [onConversationDeleted, onConversationsChanged, streamHandlers],
   );
 
   /* ---------- attachments ------------------------------------------------ */
@@ -821,6 +886,7 @@ export default function AienticChatShell({
       setInput("");
       setImages([]);
       let convoId = conversation?.id;
+      const hadConversation = !!convoId;
 
       // The conversation is created on the first message, so empty shells
       // never pile up in the sidebar. A private chat has none to create.
@@ -879,11 +945,18 @@ export default function AienticChatShell({
         createdAt: Date.now(),
       };
 
+      const fresh = !hadConversation;
       await run(convoId, {
         content: text,
         endpointId: activeModel.id,
         images: turn.images,
         skillIds,
+        // A first turn that never produced a message leaves an empty chat
+        // in the sidebar; run() clears it up rather than stranding it, and
+        // hands the text and photos back to the composer. Neither field is
+        // sent to the server — streamTurn builds its body from named fields.
+        discardIfEmpty: fresh,
+        restore: { text, attached },
         // A private turn carries the whole exchange with it: the server
         // has nothing stored to append to.
         ...(privateMode
@@ -930,6 +1003,25 @@ export default function AienticChatShell({
       sendingRef.current = false;
     }
   }, [activeModel, conversation, privateMode, run, skillIds, streaming]);
+
+  /**
+   * Try the failed turn again.
+   *
+   * Which "again" depends on where it broke. If the question made it into
+   * the conversation before the model server fell over — the common case,
+   * since the turn is stored before the upstream is called — re-sending the
+   * text would ask it twice, so this regenerates instead. If nothing was
+   * stored (the request never landed, or the conversation itself couldn't
+   * be created) it replays the original payload.
+   */
+  const retry = useCallback(async () => {
+    setError(null);
+    const tail = messages[messages.length - 1];
+    if (tail?.role === "user") return regenerate();
+
+    const last = lastRunRef.current;
+    if (last) await run(last.convoId, last.payload);
+  }, [messages, regenerate, run]);
 
   /* ---------- message actions -------------------------------------------- */
 
@@ -1143,7 +1235,18 @@ export default function AienticChatShell({
                        px-3 py-2.5 text-[13px] text-[var(--danger)]
                        shadow-[var(--shadow-pop)] max-md:left-4 max-md:max-w-none"
           >
-            <span className="min-w-0 flex-1">{error}</span>
+            <span className="min-w-0 flex-1">
+              {error}
+              {(messages.length > 0 || lastRunRef.current) && !streaming && (
+                <button
+                  onClick={retry}
+                  className="ml-2 whitespace-nowrap font-medium underline underline-offset-2
+                             hover:opacity-80"
+                >
+                  Retry
+                </button>
+              )}
+            </span>
             <button
               onClick={() => setError(null)}
               title="Dismiss"
@@ -1217,7 +1320,10 @@ export default function AienticChatShell({
                   <div
                     key={i}
                     ref={isAnchor ? anchorRef : null}
-                    className="mb-8 flex animate-fade-up flex-col items-end"
+                    data-message-id={m.id}
+                    className={`mb-8 flex animate-fade-up flex-col items-end rounded-xl
+                                transition-colors duration-500
+                                ${flash === m.id ? "bg-[var(--hover)]" : ""}`}
                   >
                     {isEditing ? (
                       <div className="w-full max-w-[85%]">
@@ -1330,7 +1436,12 @@ export default function AienticChatShell({
 
               return (
                 // See the index-key note on the user message above.
-                <div key={i} className="mb-10 animate-fade-up">
+                <div
+                  key={i}
+                  data-message-id={m.id}
+                  className={`mb-10 animate-fade-up rounded-xl transition-colors duration-500
+                              ${flash === m.id ? "bg-[var(--hover)]" : ""}`}
+                >
                   <Reasoning text={m.reasoning} />
                   <Markdown>{m.content}</Markdown>
                   {/* A single blinking caret line says "still thinking";

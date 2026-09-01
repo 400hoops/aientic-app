@@ -40,6 +40,7 @@ export function conversationJson(convo) {
     id: convo.id,
     title: convo.title,
     source: convo.source || "aientic",
+    pinned: !!convo.pinned,
     createdAt: stamp(convo.createdAt),
     updatedAt: stamp(convo.updatedAt),
     messages: convo.messages.map((m) => ({
