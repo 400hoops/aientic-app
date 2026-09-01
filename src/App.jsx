@@ -8,6 +8,7 @@ import {
 } from "./theme.js";
 import { readPref, writePref } from "./cookies.js";
 import LoginPage from "./LoginPage.jsx";
+import SettingsDialog from "./SettingsDialog.jsx";
 import Sidebar from "./Sidebar.jsx";
 import AienticChatShell from "./AienticChatShell.jsx";
 import SamplerPage from "./SamplerPage.jsx";
@@ -73,6 +74,7 @@ export default function App() {
   const [conversations, setConversations] = useState([]);
   // Search results, which carry a snippet the plain list doesn't have.
   const [matches, setMatches] = useState([]);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [activeId, setActiveId] = useState(initialRoute.activeId);
 
   const user = session?.user ?? null;
@@ -353,6 +355,7 @@ export default function App() {
       onFilter={setFilter}
       onNewChat={newChat}
       onImport={importChats}
+      onOpenSettings={() => setSettingsOpen(true)}
       onOpen={openChat}
       onDelete={removeConversation}
       onNavigate={navigate}
@@ -362,8 +365,23 @@ export default function App() {
     />
   );
 
+  const settings = settingsOpen && (
+    <SettingsDialog
+      user={user}
+      models={models}
+      modelId={modelId}
+      theme={theme}
+      onModelChange={setModelId}
+      onToggleTheme={onToggleTheme}
+      onImport={importChats}
+      onUserChanged={(next) => setSession((prev) => ({ ...prev, user: next }))}
+      onClose={() => setSettingsOpen(false)}
+    />
+  );
+
   return (
     <div className="flex h-full animate-fade-in bg-[var(--bg)] text-[var(--text)] antialiased">
+      {settings}
       {/* Desktop: the sidebar takes space in the row, so showing/hiding it
           has to animate that space rather than just the sidebar itself —
           the outer wrapper's width slides between 0 and 268px with the

@@ -22,6 +22,7 @@ const EMPTY = {
   keys: {},        // upstream API keys, one per server base URL
   samplers: {},
   conversations: [],
+  memories: {},     // userId -> [{ id, text, createdAt }]
 };
 
 export const uid = () =>

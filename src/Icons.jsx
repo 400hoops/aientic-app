@@ -19,6 +19,7 @@ import {
   Plus,
   RotateCw,
   Search,
+  Settings,
   Shield,
   SlidersHorizontal,
   Upload,
@@ -48,6 +49,7 @@ export const IconPencil = thin(Pencil, "IconPencil");
 export const IconPlus = thin(Plus, "IconPlus");
 export const IconRefresh = thin(RotateCw, "IconRefresh");
 export const IconSearch = thin(Search, "IconSearch");
+export const IconSettings = thin(Settings, "IconSettings");
 export const IconShield = thin(Shield, "IconShield");
 export const IconSliders = thin(SlidersHorizontal, "IconSliders");
 export const IconStop = thin(Square, "IconStop");

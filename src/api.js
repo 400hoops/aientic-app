@@ -38,6 +38,9 @@ export const login = (username, password) =>
 export const setupAdmin = (username, password) =>
   request("/auth/setup", { method: "POST", body: { username, password } });
 export const logout = () => request("/auth/logout", { method: "POST" });
+/** Your own username and password. Both need the current password. */
+export const updateAccount = (patch) =>
+  request("/account", { method: "PATCH", body: patch });
 
 /* ---------- models ------------------------------------------------------- */
 
@@ -94,6 +97,16 @@ export async function importChats(file) {
 /** Download one chat as Markdown or JSON. */
 export const exportChatUrl = (id, format = "md") =>
   `/api/conversations/${id}/export?format=${format}`;
+
+/* ---------- memory ------------------------------------------------------- */
+
+export const listMemories = () => request("/memories");
+export const addMemory = (text) =>
+  request("/memories", { method: "POST", body: { text } });
+export const editMemory = (id, text) =>
+  request(`/memories/${id}`, { method: "PATCH", body: { text } });
+export const removeMemory = (id) =>
+  request(`/memories/${id}`, { method: "DELETE" });
 
 /* ---------- admin -------------------------------------------------------- */
 

@@ -7,6 +7,7 @@ import {
   IconPanel,
   IconPlus,
   IconSearch,
+  IconSettings,
   IconShield,
   IconSliders,
   IconSun,
@@ -50,6 +51,7 @@ export default function Sidebar({
   onFilter,
   onNewChat,
   onImport,
+  onOpenSettings,
   onOpen,
   onDelete,
   onNavigate,
@@ -286,6 +288,7 @@ export default function Sidebar({
             {user.role === "admin" && (
               <div className="my-1.5 h-px bg-[var(--border)]" />
             )}
+            {menuItem("Settings", IconSettings, onOpenSettings)}
             {menuItem(
               theme === "dark" ? "Light mode" : "Dark mode",
               theme === "dark" ? IconSun : IconMoon,

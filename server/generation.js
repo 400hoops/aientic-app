@@ -262,17 +262,29 @@ export async function streamCompletion({
       : { role: m.role, content: m.content };
 
   const messages = [];
-  if (sampler?.systemPrompt?.trim()) {
+  // The admin's prompt for this model, plus whatever this user has asked to
+  // be remembered — one system turn, memory last so it reads as context the
+  // prompt is speaking about rather than instructions competing with it.
+  const system = [];
+  if (sampler?.systemPrompt?.trim())
     // {{CURRENT_*}} / {{USER_NAME}} resolve to the real clock at send time,
     // in the sender's timezone.
-    messages.push({
-      role: "system",
-      content: expandSystemPrompt(sampler.systemPrompt, {
+    system.push(
+      expandSystemPrompt(sampler.systemPrompt, {
         userName: user?.username,
         timeZone: clientTimeZone,
-      }),
-    });
-  }
+      })
+    );
+  const memories = user ? db.memories?.[user.id] || [] : [];
+  if (memories.length)
+    system.push(
+      "Things " +
+        (user?.username || "the user") +
+        " has asked you to remember:\n" +
+        memories.map((m) => `- ${m.text}`).join("\n")
+    );
+  if (system.length)
+    messages.push({ role: "system", content: system.join("\n\n") });
   for (const m of history) messages.push(upstreamMessage(m));
 
   const split = createReasoningSplitter();

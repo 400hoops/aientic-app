@@ -39,6 +39,7 @@ import {
   publicUser,
   needsBootstrap,
   hashPassword,
+  COOKIE,
 } from "./auth.js";
 import {
   listModels,
@@ -175,6 +176,7 @@ const MAX_LEN = {
   title: 200,
   content: 100_000,
   systemPrompt: 20_000,
+  memory: 1_000,
   imageDataUrl: 12_000_000, // ≈9 MB of image in base64
 };
 
@@ -398,6 +400,45 @@ app.post("/api/auth/login", loginRateLimit, (req, res) => {
     return bad(res, 401, "Invalid username or password");
   clearLoginAttempts(req);
   startSession(req, res, user);
+  ok(res, { user: publicUser(user) });
+});
+
+/**
+ * Change your own username or password.
+ *
+ * The current password is required for either — a borrowed, unlocked
+ * browser shouldn't be able to lock the owner out of their own account.
+ * Admins change *other* people's credentials under Admin → Users; this is
+ * only ever the signed-in account.
+ */
+app.patch("/api/account", requireAuth, (req, res) => {
+  const { username, currentPassword, newPassword } = req.body || {};
+  const user = db.users.find((u) => u.id === req.user.id);
+  if (!user) return bad(res, 404, "No such account");
+  if (!verifyPassword(user, currentPassword))
+    return bad(res, 403, "That isn't your current password");
+
+  const name = typeof username === "string" ? username.trim() : "";
+  if (name && name !== user.username) {
+    if (tooLong(name, MAX_LEN.username))
+      return bad(res, 400, `Username must be at most ${MAX_LEN.username} characters`);
+    // findUser is case-insensitive, which is what makes this a real check.
+    if (findUser(name)) return bad(res, 409, "That username is taken");
+    user.username = name;
+  }
+
+  if (newPassword) {
+    if (newPassword.length < 8)
+      return bad(res, 400, "Passwords must be at least 8 characters");
+    user.passwordHash = hashPassword(newPassword);
+    // Every other session was signed in with the old password; a password
+    // change is also how you get a stolen one out.
+    for (const [token, session] of Object.entries(db.sessions))
+      if (session.userId === user.id && token !== req.cookies?.[COOKIE])
+        delete db.sessions[token];
+  }
+
+  save();
   ok(res, { user: publicUser(user) });
 });
 
@@ -679,6 +720,7 @@ app.delete("/api/admin/users/:id", requireAdmin, (req, res) => {
   for (const c of db.conversations)
     if (c.userId === removed.id) removeConversationFiles(c.id);
   db.conversations = db.conversations.filter((c) => c.userId !== removed.id);
+  delete db.memories[removed.id];
   for (const [token, session] of Object.entries(db.sessions))
     if (session.userId === removed.id) delete db.sessions[token];
   save();
@@ -882,6 +924,60 @@ app.delete("/api/conversations/:id/messages/:messageId", requireAuth, (req, res)
   save();
   touchConversation(convo);
   ok(res, { conversation: convo });
+});
+
+/* ---------- memory -------------------------------------------------------- */
+
+/**
+ * Things the model should know about you across every chat.
+ *
+ * Kept deliberately dumb: a short list of lines you write yourself, added
+ * to the system turn of every generation (see generation.js). Nothing here
+ * is extracted from conversations automatically — what the model is told
+ * about you is a list you can read in full and delete a line from.
+ */
+const MAX_MEMORIES = 100;
+const memoriesFor = (userId) => (db.memories[userId] ||= []);
+
+app.get("/api/memories", requireAuth, (req, res) =>
+  ok(res, { memories: memoriesFor(req.user.id) })
+);
+
+app.post("/api/memories", requireAuth, (req, res) => {
+  const text = String(req.body?.text ?? "").trim();
+  if (!text) return bad(res, 400, "Nothing to remember");
+  if (text.length > MAX_LEN.memory)
+    return bad(res, 400, `Memories must be at most ${MAX_LEN.memory} characters`);
+
+  const memories = memoriesFor(req.user.id);
+  if (memories.length >= MAX_MEMORIES)
+    return bad(res, 400, `That's the ${MAX_MEMORIES}-memory limit — delete one first`);
+
+  memories.push({ id: uid(), text, createdAt: Date.now() });
+  save();
+  ok(res, { memories });
+});
+
+app.patch("/api/memories/:id", requireAuth, (req, res) => {
+  const memories = memoriesFor(req.user.id);
+  const memory = memories.find((m) => m.id === req.params.id);
+  if (!memory) return bad(res, 404, "No such memory");
+  const text = String(req.body?.text ?? "").trim();
+  if (!text) return bad(res, 400, "Nothing to remember");
+  if (text.length > MAX_LEN.memory)
+    return bad(res, 400, `Memories must be at most ${MAX_LEN.memory} characters`);
+  memory.text = text;
+  memory.updatedAt = Date.now();
+  save();
+  ok(res, { memories });
+});
+
+app.delete("/api/memories/:id", requireAuth, (req, res) => {
+  db.memories[req.user.id] = memoriesFor(req.user.id).filter(
+    (m) => m.id !== req.params.id
+  );
+  save();
+  ok(res, { memories: db.memories[req.user.id] });
 });
 
 /* ---------- import / export ---------------------------------------------- */
