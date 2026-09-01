@@ -59,10 +59,15 @@ export const deleteMessage = (conversationId, messageId) =>
   request(`/conversations/${conversationId}/messages/${messageId}`, {
     method: "DELETE",
   });
-export const editMessage = (conversationId, messageId, content) =>
+/**
+ * Edit a turn: new text, and the attachments it keeps. `images` is the
+ * surviving subset of what the message already had — the server won't
+ * accept new ones here.
+ */
+export const editMessage = (conversationId, messageId, content, images) =>
   request(`/conversations/${conversationId}/messages/${messageId}`, {
     method: "PATCH",
-    body: { content, truncate: true },
+    body: { content, images, truncate: true },
   });
 
 /**

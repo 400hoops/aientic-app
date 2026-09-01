@@ -771,7 +771,13 @@ app.patch("/api/conversations/:id/messages/:messageId", requireAuth, (req, res) 
   const message = convo.messages.find((m) => m.id === req.params.messageId);
   if (!message) return bad(res, 404, "No such message");
 
-  const { content, truncate } = req.body || {};
+  const { content, images, truncate } = req.body || {};
+  // The edited turn is still a turn: text, photos, or both — never neither.
+  const nextContent = typeof content === "string" ? content : message.content;
+  const nextImages = images === undefined ? message.images : sanitizeImages(images);
+  if (!nextContent.trim() && !nextImages?.length)
+    return bad(res, 400, "Message is empty");
+
   if (typeof content === "string") {
     if (content.length > MAX_LEN.content)
       return bad(
@@ -780,6 +786,12 @@ app.patch("/api/conversations/:id/messages/:messageId", requireAuth, (req, res) 
         `Messages must be at most ${MAX_LEN.content} characters`
       );
     message.content = content;
+  }
+  // Images can only be dropped from an existing turn, never added here —
+  // whatever comes back is filtered down to what the message already had.
+  if (images !== undefined) {
+    const kept = new Set(nextImages);
+    message.images = (message.images || []).filter((url) => kept.has(url));
   }
   // Editing a user message drops everything after it, ready for a re-run.
   if (truncate) {

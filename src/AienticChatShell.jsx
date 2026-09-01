@@ -104,7 +104,7 @@ export default function AienticChatShell({
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState(null);
-  const [editing, setEditing] = useState(null); // { id, text }
+  const [editing, setEditing] = useState(null); // { id, text, images }
   const [titleEditing, setTitleEditing] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
   const [atBottom, setAtBottom] = useState(true);
@@ -766,12 +766,16 @@ export default function AienticChatShell({
   const submitEdit = async () => {
     if (!conversation || !editing) return;
     const text = editing.text.trim();
-    if (!text) return;
+    const images = editing.images || [];
+    // Same rule as a new turn: dropping every photo *and* the text would
+    // leave nothing to re-answer.
+    if (!text && !images.length) return;
 
     const { conversation: next } = await api.editMessage(
       conversation.id,
       editing.id,
       text,
+      images,
     );
     setConversation(next);
     setEditing(null);
@@ -948,6 +952,37 @@ export default function AienticChatShell({
                   <div key={i} className="mb-8 flex animate-fade-up flex-col items-end">
                     {isEditing ? (
                       <div className="w-full max-w-[85%]">
+                        {/* The photos on the turn, editable the only way
+                            that makes sense here: click to see one full
+                            size, X to drop it before re-asking. */}
+                        {editing.images.length > 0 && (
+                          <div className="mb-2 flex flex-wrap justify-end gap-2">
+                            {editing.images.map((url, j) => (
+                              <div key={`${m.id}-edit-${j}`} className="relative animate-scale-in">
+                                <PreviewableImage
+                                  src={url}
+                                  alt={`Attached image ${j + 1}`}
+                                  className="h-16 w-16 rounded-lg object-cover"
+                                />
+                                <button
+                                  onMouseDown={(e) => e.preventDefault()}
+                                  onClick={() =>
+                                    setEditing((prev) => ({
+                                      ...prev,
+                                      images: prev.images.filter((u) => u !== url),
+                                    }))
+                                  }
+                                  title="Remove image"
+                                  className="absolute -right-1.5 -top-1.5 rounded-full
+                                             border border-[var(--border)] bg-[var(--raised)] p-[3px]
+                                             text-[var(--muted)] hover:text-[var(--text)]"
+                                >
+                                  <IconX className="h-3 w-3" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                         <textarea
                           value={editing.text}
                           autoFocus
@@ -977,7 +1012,9 @@ export default function AienticChatShell({
                           <button
                             onMouseDown={(e) => e.preventDefault()}
                             onClick={submitEdit}
-                            className="rounded-lg bg-[var(--text)] px-3 py-1.5 text-[var(--bg)]"
+                            disabled={!editing.text.trim() && !editing.images.length}
+                            className="rounded-lg bg-[var(--text)] px-3 py-1.5 text-[var(--bg)]
+                                       disabled:opacity-40"
                           >
                             Save
                           </button>
@@ -1007,7 +1044,11 @@ export default function AienticChatShell({
                           timestamp={m.createdAt}
                           hidden={streaming}
                           onEdit={() =>
-                            setEditing({ id: m.id, text: m.content })
+                            setEditing({
+                              id: m.id,
+                              text: m.content,
+                              images: m.images || [],
+                            })
                           }
                           onCopy={() => copy(m.content)}
                           onDelete={() => removeMessage(m.id)}
