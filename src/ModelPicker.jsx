@@ -58,7 +58,7 @@ export default function ModelPicker({
                       transition-colors disabled:opacity-50
                       ${tone === "header"
                         ? "bg-[var(--hover)] text-[var(--text)] hover:bg-[var(--active)]"
-                        : "text-[var(--muted)] hover:bg-[var(--hover)]"}`}
+                        : "bg-[var(--raised)] text-[var(--text-soft)] hover:bg-[var(--hover)]"}`}
         >
           {/* min-w-0 here too: the span is itself a flex item of the button
               (display:flex), so it also defaults to min-width:auto — the

@@ -155,7 +155,9 @@ export default function Sidebar({
   const recents = searching ? conversations : conversations.filter((c) => !c.pinned);
 
   const heading = (text) => (
-    <div className="ui-label px-2.5 pb-1.5 pt-4 first:pt-1">{text}</div>
+    <div className="px-2.5 pb-1 pt-5 text-[length:var(--fs-sm)] text-[var(--muted)] first:pt-1">
+      {text}
+    </div>
   );
 
   const chatRow = (c) => (
@@ -175,7 +177,7 @@ export default function Sidebar({
               }
             }}
             className={`group flex animate-fade-in cursor-pointer items-start justify-between gap-1 rounded-lg
-                        px-2.5 py-[7px] transition-colors outline-none
+                        px-2.5 py-2 transition-colors outline-none
                         focus-visible:ring-2 focus-visible:ring-[var(--focus)]
               ${c.id === activeId && view === "chat"
                 ? "bg-[var(--accent-soft)] text-[var(--text)]"

@@ -1527,10 +1527,11 @@ export default function AienticChatShell({
               // m-auto centres it in the column once the column is at least as
               // tall as the scroller.
               <div className="m-auto text-center">
-                <p className="animate-fade-up text-[length:var(--fs-lg)] text-[var(--text-soft)]">
+                <p className="display animate-fade-up text-[length:var(--fs-lg)]
+                              leading-tight text-[var(--text)]">
                   {privateMode ? "You're in a private chat" : "What are we testing today?"}
                 </p>
-                <p className="mt-2 animate-fade-up text-[length:var(--fs-sm2)] text-[var(--faint)]
+                <p className="mt-3 animate-fade-up text-[length:var(--fs-sm2)] text-[var(--muted)]
                             [animation-delay:90ms]">
                   {privateMode
                     ? "Nothing here is written to the server. Closing this view is the delete."
@@ -1838,11 +1839,14 @@ export default function AienticChatShell({
             <div
               ref={setCardRef}
               {...dragProps}
-              className={`relative rounded-2xl border bg-[var(--raised)] p-2.5
-                          shadow-[var(--shadow-card)] focus-within:border-[var(--focus)]
+              // Filled rather than outlined, and generously rounded: the
+              // composer reads as a surface you type on instead of a form
+              // field with a box around it. The border stays for the drag
+              // state, which does need an edge to light up.
+              className={`relative rounded-[26px] border bg-[var(--panel)] p-3
                           ${dragging
                             ? "border-[var(--focus)] border-dashed"
-                            : "border-[var(--border-strong)]"}`}
+                            : "border-transparent"}`}
             >
               {dragging && (
                 <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center
@@ -2001,8 +2005,8 @@ export default function AienticChatShell({
                 </div>
               )}
 
-              <div className="flex items-center justify-between pt-1">
-                <div className="flex min-w-0 items-center gap-1">
+              <div className="flex items-center justify-between pt-1.5">
+                <div className="flex min-w-0 items-center gap-1.5">
                   {/* First in the row, before the model picker: attaching a
                       file is what the hand reaches for, and the leading edge
                       of the bar is where it goes.
@@ -2143,7 +2147,7 @@ export default function AienticChatShell({
                       stop();
                     }}
                     title="Stop generating"
-                    className="rounded-lg bg-[var(--accent)] p-2 text-[var(--accent-fg)]
+                    className="rounded-full bg-[var(--text)] p-2.5 text-[var(--bg)]
                                transition-transform duration-150 active:scale-95"
                   >
                     <IconStop className="h-4 w-4" />
@@ -2155,11 +2159,11 @@ export default function AienticChatShell({
                       (!input.trim() && !images.length && !docs.length) || !activeModel
                     }
                     title="Send"
-                    className="rounded-lg bg-[var(--accent)] p-2 text-[var(--accent-fg)]
+                    className="rounded-full bg-[var(--text)] p-2.5 text-[var(--bg)]
                              transition-[background-color,opacity,scale] duration-150
-                             active:scale-95 hover:bg-[var(--accent-hover)]
-                             disabled:cursor-not-allowed disabled:bg-[var(--border)]
-                             disabled:text-[var(--muted)] disabled:active:scale-100"
+                             active:scale-95 hover:opacity-90 disabled:cursor-not-allowed
+                             disabled:bg-[var(--panel-2)] disabled:text-[var(--faint)]
+                             disabled:active:scale-100"
                   >
                     <IconArrowUp className="h-4 w-4" />
                   </button>
