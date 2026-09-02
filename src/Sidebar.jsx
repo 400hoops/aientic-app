@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 
 import {
   IconDownload,
+  IconArtifact,
   IconLibrary,
   IconLogOut,
   IconMore,
@@ -67,6 +68,7 @@ export default function Sidebar({
   onNewChat,
   onOpenSettings,
   onOpenLibrary,
+  onOpenArtifacts,
   onOpen,
   onDelete,
   onRename,
@@ -321,6 +323,17 @@ export default function Sidebar({
         {/* The library is a place you go and look at, so it's listed as one.
             It opens where it lives, in settings, rather than being a second
             copy of the same screen. */}
+        {/* Things the model built, as opposed to things it said. They live
+            inside conversations, so this is a way back to them rather than a
+            place they're kept. */}
+        <button
+          onClick={onOpenArtifacts}
+          className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-[length:var(--fs-base)]
+                     text-[var(--text-soft)] hover:bg-[var(--hover)]"
+        >
+          <IconArtifact className="h-[18px] w-[18px] shrink-0" />
+          Artifacts
+        </button>
         <button
           onClick={onOpenLibrary}
           className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-[length:var(--fs-base)]

@@ -50,7 +50,17 @@ export function startStubModel(port = 0) {
         (m) => m.role === "system" && String(m.content).includes("<passage")
       );
       const long = /LONG/.test(asked);
-      const reply = passage
+      // A whole HTML page, for the artifact tests: a fenced block that is a
+      // finished thing rather than an example being discussed.
+      const artifact = /ARTIFACT/.test(asked);
+      const page =
+        "Here you go.\n\n```html\n<!doctype html>\n<html>\n<head><title>Kettle timer</title></head>\n<body>\n" +
+        "<h1>Kettle timer</h1>\n".repeat(1) +
+        "<p>A page.</p>\n".repeat(14) +
+        "</body>\n</html>\n```\n\nThat should do it.";
+      const reply = artifact
+        ? page
+        : passage
         ? "From your documents: " +
           (String(passage.content).match(/citric acid[^.]*\./i)?.[0] ||
             "a passage was supplied.")

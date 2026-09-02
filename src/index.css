@@ -381,20 +381,19 @@ th,
   letter-spacing: -0.01em;
 }
 
-/* The transcript has two voices in it, so it's set in two faces: what the
-   model says is serif, what you said is the sans you typed it in. It makes
-   a page you can skim and know who is speaking without reading a word — and
-   it costs nothing, because the split is already there in the content.
+/* The answer, as prose.
 
-   Playfair is a display face with a lot of stroke contrast, which is
-   punishing at body sizes if you leave it alone: the size goes up a little,
-   the lines get more air, and the weight comes down to 400 so the thicks
-   don't clot. Code, tables and keyboard text opt back out — a monospace
-   sample set in a Didone is nobody's idea of legible. */
+   Both voices are set in the same sans now. The two-face split read well on
+   a page of finished writing and badly on a chat: a two-word reply in a
+   Didone looks like a pull quote, and the contrast that makes Playfair
+   handsome at 40px is noise at 15px on a screen. What's left is the part
+   that was actually doing the work — a slightly larger size and more line
+   height than the interface around it, so a long answer reads as a passage
+   rather than as UI text. Code and tables keep their own faces. */
 .answer {
-  font-family: var(--font-serif);
+  font-family: var(--font-sans);
   font-size: calc(var(--fs-body) + 1px);
-  line-height: 1.8;
+  line-height: 1.75;
   font-weight: 400;
   letter-spacing: 0;
 }

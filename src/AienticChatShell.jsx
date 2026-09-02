@@ -13,6 +13,10 @@ import { isPhone } from "./isPhone.js";
 import Markdown from "./Markdown.jsx";
 import MessageActions from "./MessageActions.jsx";
 import ModelPicker from "./ModelPicker.jsx";
+import { forgetScroll, recallScroll, rememberScroll } from "./scrollMemory.js";
+import ArtifactPanel from "./ArtifactPanel.jsx";
+import { ArtifactContext } from "./ArtifactContext.js";
+import { artifactsIn } from "../shared/artifacts.js";
 import {
   IconArrowDown,
   IconArrowUp,
@@ -164,6 +168,7 @@ export default function AienticChatShell({
   onImportChats,
   onTogglePrivate,
   highlightMessage = null,
+  openArtifactAt = null,
   renamed = null,
   privateMode = false,
   onConversationDeleted,
@@ -462,6 +467,14 @@ export default function AienticChatShell({
     // Reaching the end again resumes following. Our own auto-scroll only runs
     // while following is already on, so this can't switch itself back on.
     if (gap < 24) followRef.current = true;
+
+    // Remember the place, so a refresh comes back to it. Sitting at the end
+    // is *forgotten* rather than stored: the end is already the default, and
+    // a stored number would be wrong the moment the next answer made the
+    // page taller.
+    const id = idRef.current;
+    if (id && restoringRef.current === null)
+      gap < 24 ? forgetScroll(id) : rememberScroll(id, el.scrollTop);
   }, []);
 
   // Only a gesture that means "I want to look up there" stops the following.
@@ -544,11 +557,47 @@ export default function AienticChatShell({
   // them to the bottom. Animating that jump made every refresh visibly
   // scroll top-to-bottom, so it only gets the "smooth" treatment for a turn
   // added to a conversation already on screen; the initial settle is instant.
+  // Non-null while a remembered position is being put back; see below.
+  const restoringRef = useRef(null);
+
+  // Re-apply it on every commit until the page stops growing under it. A
+  // conversation reaches its final height over several frames, and a
+  // scrollTop set against a half-built page is a different place once the
+  // rest arrives.
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el || restoringRef.current === null) return;
+    const top = Math.min(restoringRef.current, el.scrollHeight - el.clientHeight);
+    if (Math.abs(el.scrollTop - top) > 1) el.scrollTop = top;
+  });
+
+  // And stop: past this point the reader owns the scroller again.
+  useEffect(() => {
+    if (restoringRef.current === null) return;
+    const timer = setTimeout(() => {
+      restoringRef.current = null;
+    }, 700);
+    return () => clearTimeout(timer);
+  }, [conversation?.id]);
+
   const settledConvoRef = useRef(null);
   useEffect(() => {
     const firstSettle = settledConvoRef.current !== conversation?.id;
     settledConvoRef.current = conversation?.id ?? null;
     if (firstSettle) {
+      // Where this tab left off, if it left off anywhere but the end.
+      const saved = recallScroll(conversation?.id);
+      if (saved !== null) {
+        // Nothing is at its final height yet — fonts, images and the tail
+        // spacer all still to land — so the number is re-applied for a beat
+        // rather than set once and hoped for. restoringRef also holds off
+        // onScroll, which would otherwise record these intermediate
+        // positions over the one being restored.
+        followRef.current = false;
+        pinnedRef.current = false;
+        restoringRef.current = saved;
+        return;
+      }
       // Opening a conversation lands at its end, instantly — animating that
       // made every refresh visibly scroll top-to-bottom.
       pinnedRef.current = false;
@@ -567,6 +616,34 @@ export default function AienticChatShell({
    * what makes it findable — in a wall of text, "it's on screen somewhere"
    * isn't an answer.
    */
+  /* ---------- artifacts -------------------------------------------------- */
+
+  // The one open in the side panel, or null. Held as the artifact itself
+  // rather than an id: it's a view of a message, so there's nothing to look
+  // up and nothing to go stale.
+  const [artifact, setArtifact] = useState(null);
+  const openArtifact = useCallback((next) => setArtifact(next), []);
+  const closeArtifact = useCallback(() => setArtifact(null), []);
+
+  // Close it when the conversation changes: the panel belongs to the chat it
+  // was opened from, and leaving it up over a different one is the same bug
+  // as a side pane that won't go away.
+  useEffect(() => {
+    setArtifact(null);
+  }, [conversation?.id, privateMode]);
+
+  /**
+   * Opened from the Artifacts list rather than from an answer: find the
+   * message it came from and open the block at that position.
+   */
+  useEffect(() => {
+    const wanted = openArtifactAt;
+    if (!wanted || conversation?.id !== wanted.conversationId) return;
+    const message = messages.find((m) => m.id === wanted.messageId);
+    const found = message && artifactsIn(message)[wanted.at ?? 0];
+    if (found) setArtifact(found);
+  }, [openArtifactAt, conversation?.id, messages]);
+
   const [flash, setFlash] = useState(null);
   useEffect(() => {
     const target = highlightMessage;
@@ -1401,7 +1478,12 @@ export default function AienticChatShell({
   }
 
   return (
-    <div className="flex min-w-0 animate-fade-in flex-1 flex-col">
+    // The panel sits beside the conversation rather than over it: an
+    // artifact is usually something you're still talking about, and a modal
+    // would put the thing and the discussion of it on different screens.
+    <ArtifactContext.Provider value={openArtifact}>
+      <div className="flex min-w-0 flex-1">
+        <div className="flex min-w-0 animate-fade-in flex-1 flex-col">
       {/* translateZ(0) promotes the bar to its own compositor layer. iOS
           Safari otherwise leaves it behind by a frame — smearing the border
           — while the composer's keyboard-driven resize repaints beneath it. */}
@@ -2204,7 +2286,10 @@ export default function AienticChatShell({
             </div>
           </div>
         </div>
+          </div>
+        </div>
+        {artifact && <ArtifactPanel artifact={artifact} onClose={closeArtifact} />}
       </div>
-    </div>
+    </ArtifactContext.Provider>
   );
 }

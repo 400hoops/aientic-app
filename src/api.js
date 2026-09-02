@@ -115,6 +115,11 @@ export const exportChatUrl = (id, format = "md") =>
 export const readUrl = (url, signal) =>
   request("/read-url", { method: "POST", body: { url }, signal });
 
+/* ---------- artifacts ---------------------------------------------------- */
+
+/** Everything the model has built for you, across every conversation. */
+export const listArtifacts = () => request("/artifacts");
+
 /* ---------- knowledge ---------------------------------------------------- */
 
 export const listKnowledge = () => request("/knowledge");

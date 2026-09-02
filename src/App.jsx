@@ -9,6 +9,7 @@ import {
 import { readPref, writePref } from "./cookies.js";
 import LoginPage from "./LoginPage.jsx";
 import SettingsDialog from "./SettingsDialog.jsx";
+import ArtifactsDialog from "./ArtifactsDialog.jsx";
 import Sidebar from "./Sidebar.jsx";
 import AienticChatShell from "./AienticChatShell.jsx";
 import SamplerPage from "./SamplerPage.jsx";
@@ -313,6 +314,12 @@ export default function App() {
   // messageId is set when the row came from a search result: the chat opens
   // scrolled to the line that matched rather than at its end.
   const [highlightMessage, setHighlightMessage] = useState(null);
+
+  // The Artifacts list, and the one it was asked to open. The chat shell
+  // does the opening, because the artifact is a piece of a message and the
+  // shell is what has the messages.
+  const [artifactsOpen, setArtifactsOpen] = useState(false);
+  const [openArtifactAt, setOpenArtifactAt] = useState(null);
   const openChat = (id, messageId = null) => {
     setActiveId(id);
     setHighlightMessage(messageId ? { conversationId: id, messageId } : null);
@@ -419,6 +426,10 @@ export default function App() {
         setSettingsOpen("Knowledge");
         closeOnPhone();
       }}
+      onOpenArtifacts={() => {
+        setArtifactsOpen(true);
+        closeOnPhone();
+      }}
       onOpen={openChat}
       onDelete={removeConversation}
       onRename={renameConversation}
@@ -446,9 +457,29 @@ export default function App() {
     />
   );
 
+  const artifacts = artifactsOpen && (
+    <ArtifactsDialog
+      onOpen={(item) => {
+        setArtifactsOpen(false);
+        setActiveId(item.conversationId);
+        setView("chat");
+        // A fresh object every time, so opening the same one twice in a row
+        // still reaches the effect that acts on it.
+        setOpenArtifactAt({
+          conversationId: item.conversationId,
+          messageId: item.messageId,
+          at: item.at ?? 0,
+        });
+        closeOnPhone();
+      }}
+      onClose={() => setArtifactsOpen(false)}
+    />
+  );
+
   return (
     <div className="flex h-full animate-fade-in bg-[var(--bg)] text-[var(--text)] antialiased">
       {settings}
+      {artifacts}
       {/* Desktop: the sidebar takes space in the row, so showing/hiding it
           has to animate that space rather than just the sidebar itself —
           the outer wrapper's width slides between 0 and 268px with the
@@ -499,6 +530,7 @@ export default function App() {
           modelStatus={modelStatus}
           conversationId={activeId}
           highlightMessage={highlightMessage}
+          openArtifactAt={openArtifactAt}
           renamed={renamed}
           modelId={modelId}
           onModelChange={setModelId}

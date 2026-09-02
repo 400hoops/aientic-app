@@ -28,6 +28,7 @@ import {
 } from "./chatFiles.js";
 import { parseUpload } from "./claudeImport.js";
 import { readUrl } from "./readpage.js";
+import { artifactsIn, artifactSummary } from "../shared/artifacts.js";
 import {
   addDocument,
   library,
@@ -1226,6 +1227,37 @@ app.get("/api/conversations/:id/export", requireAuth, (req, res) => {
       ? conversationMarkdown(convo)
       : JSON.stringify(conversationJson(convo), null, 2)
   );
+});
+
+/* ---------- artifacts ----------------------------------------------------- */
+
+/**
+ * Every artifact the signed-in user has, newest first.
+ *
+ * Nothing is stored: this walks the conversations and re-reads the answers,
+ * because an artifact *is* the answer it came from. Storing a copy would give
+ * the list its own lifetime — entries pointing at a message that was edited
+ * into something else, or deleted a week ago — and the one thing a list of
+ * your work must not do is lie about what's in it. Re-reading a few hundred
+ * messages costs nothing next to that.
+ */
+app.get("/api/artifacts", requireAuth, (req, res) => {
+  const artifacts = [];
+  for (const convo of db.conversations) {
+    if (convo.userId !== req.user.id) continue;
+    for (const message of convo.messages || [])
+      for (const artifact of artifactsIn(message))
+        artifacts.push({
+          ...artifactSummary(artifact),
+          conversationId: convo.id,
+          conversationTitle: convo.title,
+          // An answer from before completion timestamps were recorded has no
+          // createdAt of its own; the conversation's is close enough to sort by.
+          createdAt: artifact.createdAt || convo.updatedAt,
+        });
+  }
+  artifacts.sort((a, b) => b.createdAt - a.createdAt);
+  ok(res, { artifacts });
 });
 
 /* ---------- knowledge ----------------------------------------------------- */

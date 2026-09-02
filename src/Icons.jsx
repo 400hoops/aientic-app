@@ -10,6 +10,7 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  Code2,
   Copy,
   Ghost,
   Download,
@@ -29,6 +30,7 @@ import {
   Shield,
   SlidersHorizontal,
   Upload,
+  Shapes,
   Sparkles,
   Square,
   Sun,
@@ -65,6 +67,8 @@ export const IconSearch = thin(Search, "IconSearch");
 export const IconSettings = thin(Settings, "IconSettings");
 export const IconShield = thin(Shield, "IconShield");
 export const IconSliders = thin(SlidersHorizontal, "IconSliders");
+export const IconArtifact = thin(Shapes, "IconArtifact");
+export const IconCode = thin(Code2, "IconCode");
 export const IconSparkles = thin(Sparkles, "IconSparkles");
 export const IconStop = thin(Square, "IconStop");
 export const IconSun = thin(Sun, "IconSun");

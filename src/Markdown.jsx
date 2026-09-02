@@ -3,7 +3,9 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
-import { IconCheck, IconCopy } from "./Icons.jsx";
+import { IconArtifact, IconCheck, IconCode, IconCopy } from "./Icons.jsx";
+import { artifactKind, artifactTitle } from "../shared/artifacts.js";
+import { useOpenArtifact } from "./ArtifactContext.js";
 import { copyText } from "./clipboard.js";
 import PreviewableImage from "./ImageLightbox.jsx";
 
@@ -13,6 +15,41 @@ import PreviewableImage from "./ImageLightbox.jsx";
  * Streaming means this re-renders on every token, so the component is
  * memoised on the text and the heavy bits stay out of the render path.
  */
+
+/**
+ * A finished thing, as a card.
+ *
+ * A page or a script the model wrote is not conversation — it's the output,
+ * and printing 200 lines of it into the transcript buries the sentence that
+ * explains it under the thing being explained. The card says what it is; the
+ * panel is where you look at it.
+ */
+function ArtifactCard({ kind, lang, code, onOpen }) {
+  const lines = code.split("\n").length;
+  const Glyph = kind === "code" ? IconCode : IconArtifact;
+
+  return (
+    <button
+      onClick={onOpen}
+      className="my-4 flex w-full items-center gap-3 rounded-xl border border-[var(--border)]
+                 bg-[var(--panel)] px-3.5 py-3 text-left hover:border-[var(--border-strong)]
+                 hover:bg-[var(--hover)]"
+    >
+      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg
+                       bg-[var(--panel-2)] text-[var(--muted)]">
+        <Glyph className="h-[18px] w-[18px]" />
+      </span>
+      <span className="min-w-0">
+        <span className="block truncate text-[length:var(--fs-sm2)] text-[var(--text)]">
+          {artifactTitle(kind, code, lang)}
+        </span>
+        <span className="ui-label block text-[length:var(--fs-xs)] text-[var(--muted)]">
+          {lang || kind} · {lines} {lines === 1 ? "line" : "lines"}
+        </span>
+      </span>
+    </button>
+  );
+}
 
 function CodeBlock({ language, code }) {
   const [copied, setCopied] = useState(false);
@@ -53,6 +90,32 @@ function CodeBlock({ language, code }) {
   );
 }
 
+/**
+ * A fenced block, as whichever of the two it is.
+ *
+ * Split out so the hook has somewhere legal to live: `code` above is called
+ * by react-markdown as a plain function rather than mounted as a component,
+ * so a useContext inside it would be a hook in a function that isn't one.
+ */
+function MaybeArtifact({ language, code }) {
+  const openArtifact = useOpenArtifact();
+  const kind = artifactKind({ lang: (language || "").toLowerCase(), code });
+
+  // Without somewhere to open it, a card would be a button that does
+  // nothing — so the block stays a block.
+  if (kind && openArtifact)
+    return (
+      <ArtifactCard
+        kind={kind}
+        lang={(language || "").toLowerCase()}
+        code={code}
+        onOpen={() => openArtifact({ kind, lang: (language || "").toLowerCase(), code })}
+      />
+    );
+
+  return <CodeBlock language={language} code={code} />;
+}
+
 const components = {
   code({ inline, className, children }) {
     const text = String(children).replace(/\n$/, "");
@@ -67,7 +130,7 @@ const components = {
         </code>
       );
     }
-    return <CodeBlock language={language} code={text} />;
+    return <MaybeArtifact language={language} code={text} />;
   },
   pre: ({ children }) => <>{children}</>,
   p: ({ children }) => <p className="my-3.5 first:mt-0 last:mb-0">{children}</p>,
