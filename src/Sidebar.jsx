@@ -3,7 +3,6 @@ import { createPortal } from "react-dom";
 
 import {
   IconDownload,
-  IconGhost,
   IconLogOut,
   IconMore,
   IconPencil,
@@ -64,7 +63,6 @@ export default function Sidebar({
   theme,
   onFilter,
   onNewChat,
-  onPrivateChat,
   onOpenSettings,
   onOpen,
   onDelete,
@@ -316,17 +314,6 @@ export default function Sidebar({
         >
           <IconPlus className="h-[18px] w-[18px] shrink-0" />
           New chat
-        </button>
-        <button
-          onClick={onPrivateChat}
-          title="A chat the server never keeps"
-          className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-[length:var(--fs-base)]
-                      ${view === "private"
-                        ? "bg-[var(--active)] text-[var(--text)]"
-                        : "text-[var(--text-soft)] hover:bg-[var(--hover)]"}`}
-        >
-          <IconGhost className="h-[18px] w-[18px] shrink-0" />
-          Private chat
         </button>
       </nav>
 

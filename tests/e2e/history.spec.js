@@ -35,7 +35,7 @@ test.describe("history", () => {
     await expect(rows.first()).toBeVisible();
     const before = await rows.count();
 
-    await sidebar(page).getByRole("button", { name: "Private chat" }).click();
+    await page.getByRole("button", { name: "Private chat" }).first().click();
     await expect(page.getByText("not saved anywhere")).toBeVisible();
 
     const composer = page.locator("textarea").first();

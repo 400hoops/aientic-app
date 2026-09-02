@@ -408,7 +408,6 @@ export default function App() {
       theme={theme}
       onFilter={setFilter}
       onNewChat={newChat}
-      onPrivateChat={privateChat}
       onImport={importChats}
       onOpenSettings={() => setSettingsOpen(true)}
       onOpen={openChat}
@@ -509,6 +508,9 @@ export default function App() {
           }
           onConversationsChanged={refreshConversations}
           onImportChats={importChats}
+          onTogglePrivate={() =>
+            effectiveView === "private" ? newChat() : privateChat()
+          }
           onConversationDeleted={removeConversation}
           // A conversation id that will never resolve (a stale bookmark, a
           // link from before a fresh install) — nothing to delete on the

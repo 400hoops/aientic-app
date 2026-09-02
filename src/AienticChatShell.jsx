@@ -162,6 +162,7 @@ export default function AienticChatShell({
   onConversationNotFound,
   onConversationsChanged,
   onImportChats,
+  onTogglePrivate,
   highlightMessage = null,
   renamed = null,
   privateMode = false,
@@ -1443,7 +1444,7 @@ export default function AienticChatShell({
             this conversation and whether that model is loaded — the two
             facts you'd otherwise open the picker to check. */}
         {conversation && activeModel && (
-          <span className="ml-auto flex shrink-0 items-center gap-2 max-md:hidden">
+          <span className="ml-auto flex shrink-0 items-center gap-2 pr-1 max-md:hidden">
             {modelStatus[activeModel.id] === "loaded" && (
               <span
                 title="Loaded in memory"
@@ -1452,6 +1453,29 @@ export default function AienticChatShell({
             )}
             <span className="ui-label">{activeModel.label}</span>
           </span>
+        )}
+        {/* Private chat: a state this conversation can be in, so it belongs
+            with the conversation rather than in the sidebar's list of
+            destinations. No filled background — it's a mode toggle, not a
+            button that does something on press. */}
+        {onTogglePrivate && (
+          <button
+            onClick={onTogglePrivate}
+            aria-label="Private chat"
+            aria-pressed={privateMode}
+            title={
+              privateMode
+                ? "Leave the private chat"
+                : "Start a private chat — nothing is written down"
+            }
+            className={`shrink-0 rounded-md p-1.5 transition-colors
+                        ${conversation && activeModel ? "" : "ml-auto"}
+                        ${privateMode
+                          ? "text-[var(--accent)]"
+                          : "text-[var(--muted)] hover:text-[var(--text)]"}`}
+          >
+            <IconGhost className="h-[19px] w-[19px]" />
+          </button>
         )}
       </header>
 
