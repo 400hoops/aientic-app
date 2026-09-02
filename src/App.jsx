@@ -79,6 +79,8 @@ export default function App() {
   const [conversations, setConversations] = useState([]);
   // Search results, which carry a snippet the plain list doesn't have.
   const [matches, setMatches] = useState([]);
+  // false, true, or the section to open at — "Knowledge", from the
+  // sidebar's Library entry.
   const [settingsOpen, setSettingsOpen] = useState(false);
   // The last rename made from the sidebar, passed down so an open chat's
   // header follows it.
@@ -409,7 +411,14 @@ export default function App() {
       onFilter={setFilter}
       onNewChat={newChat}
       onImport={importChats}
-      onOpenSettings={() => setSettingsOpen(true)}
+      onOpenSettings={() => {
+        setSettingsOpen(true);
+        closeOnPhone();
+      }}
+      onOpenLibrary={() => {
+        setSettingsOpen("Knowledge");
+        closeOnPhone();
+      }}
       onOpen={openChat}
       onDelete={removeConversation}
       onRename={renameConversation}
@@ -430,6 +439,7 @@ export default function App() {
       onModelChange={setModelId}
       onToggleTheme={onToggleTheme}
       onImport={importChats}
+      focus={typeof settingsOpen === "string" ? settingsOpen : null}
       onNavigate={navigate}
       onUserChanged={(next) => setSession((prev) => ({ ...prev, user: next }))}
       onClose={() => setSettingsOpen(false)}

@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 
 import {
   IconDownload,
+  IconLibrary,
   IconLogOut,
   IconMore,
   IconPencil,
@@ -18,7 +19,8 @@ import {
   IconTrash,
 } from "./Icons.jsx";
 import Wordmark from "./Wordmark.jsx";
-import { displayName, groupByDate, initial } from "./format.js";
+import Avatar from "./Avatar.jsx";
+import { displayName, groupByDate } from "./format.js";
 
 // The row "…" menu's own size, needed before it exists: the trigger works
 // out where to put it, and a menu near the bottom of the screen flips above
@@ -64,6 +66,7 @@ export default function Sidebar({
   onFilter,
   onNewChat,
   onOpenSettings,
+  onOpenLibrary,
   onOpen,
   onDelete,
   onRename,
@@ -315,6 +318,17 @@ export default function Sidebar({
           <IconPlus className="h-[18px] w-[18px] shrink-0" />
           New chat
         </button>
+        {/* The library is a place you go and look at, so it's listed as one.
+            It opens where it lives, in settings, rather than being a second
+            copy of the same screen. */}
+        <button
+          onClick={onOpenLibrary}
+          className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-[length:var(--fs-base)]
+                     text-[var(--text-soft)] hover:bg-[var(--hover)]"
+        >
+          <IconLibrary className="h-[18px] w-[18px] shrink-0" />
+          Library
+        </button>
       </nav>
 
       <div className="px-3 pb-1 pt-4">
@@ -398,10 +412,7 @@ export default function Sidebar({
           className={`flex w-full items-center gap-2.5 rounded-lg px-1.5 py-1 transition-colors
                       hover:bg-[var(--hover)] ${menuOpen ? "bg-[var(--hover)]" : ""}`}
         >
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full
-                          bg-[var(--accent)] text-[13px] font-medium text-[var(--accent-fg)]">
-            {initial(user.username)}
-          </div>
+          <Avatar user={user} size={32} />
           <div className="min-w-0 flex-1 text-left">
             <div className="truncate text-[length:var(--fs-sm2)] leading-tight">
               {displayName(user.username)}

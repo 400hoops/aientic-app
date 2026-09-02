@@ -53,7 +53,14 @@ export const hashPassword = (plain) => bcrypt.hashSync(plain, 12);
 
 export function publicUser(user) {
   if (!user) return null;
-  return { id: user.id, username: user.username, role: user.role };
+  return {
+    id: user.id,
+    username: user.username,
+    role: user.role,
+    // Sent with the account rather than fetched separately: it's a couple
+    // of kilobytes and it's needed on the first paint of every screen.
+    ...(user.avatar ? { avatar: user.avatar } : {}),
+  };
 }
 
 export const findUser = (username) =>

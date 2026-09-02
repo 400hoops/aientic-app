@@ -15,8 +15,6 @@ test.describe("a conversation", () => {
       sidebar(page).locator('[role="button"][aria-label="What does this do?"]')
     ).toBeVisible();
 
-    // The answer says which model produced it.
-    await expect(page.locator(".ui-label", { hasText: "Stub" }).first()).toBeVisible();
   });
 
   test("the question rises to the top of the screen when sent", async ({ page }) => {

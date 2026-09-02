@@ -188,6 +188,10 @@ const MAX_LEN = {
   attachment: 200_000,       // one pasted article or dropped text file
   attachmentsTotal: 400_000, // everything attached to a single turn
   imageDataUrl: 12_000_000, // ≈9 MB of image in base64
+  // A picture of a face at 256px. The browser squares and shrinks the file
+  // before it's sent (see SettingsDialog), so this is a backstop against a
+  // client that doesn't, not the working size.
+  avatar: 400_000,
 };
 
 const tooLong = (value, max) =>
@@ -485,6 +489,38 @@ app.patch("/api/account", requireAuth, (req, res) => {
         delete db.sessions[token];
   }
 
+  save();
+  ok(res, { user: publicUser(user) });
+});
+
+/**
+ * Your own picture.
+ *
+ * Separate from the account route above, which asks for your password
+ * before it will change anything: a password is the right gate on a
+ * username or a password, and the wrong one on a photo. Losing this to
+ * someone at your unlocked laptop costs you a picture.
+ */
+const AVATAR_RE = /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/;
+
+app.put("/api/account/avatar", requireAuth, (req, res) => {
+  const { avatar } = req.body || {};
+  if (typeof avatar !== "string" || !AVATAR_RE.test(avatar))
+    return bad(res, 400, "That isn't a PNG, JPEG or WebP image");
+  if (avatar.length > MAX_LEN.avatar)
+    return bad(res, 400, "That picture is too large — try a smaller one");
+
+  const user = db.users.find((u) => u.id === req.user.id);
+  if (!user) return bad(res, 404, "No such account");
+  user.avatar = avatar;
+  save();
+  ok(res, { user: publicUser(user) });
+});
+
+app.delete("/api/account/avatar", requireAuth, (req, res) => {
+  const user = db.users.find((u) => u.id === req.user.id);
+  if (!user) return bad(res, 404, "No such account");
+  delete user.avatar;
   save();
   ok(res, { user: publicUser(user) });
 });

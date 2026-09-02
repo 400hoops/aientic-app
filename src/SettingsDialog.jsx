@@ -10,6 +10,7 @@ import {
   IconUpload,
   IconX,
 } from "./Icons.jsx";
+import Avatar from "./Avatar.jsx";
 import ModelPicker from "./ModelPicker.jsx";
 
 /**
@@ -23,6 +24,7 @@ import ModelPicker from "./ModelPicker.jsx";
  */
 export default function SettingsDialog({
   user,
+  focus = null,
   onNavigate,
   models,
   modelId,
@@ -34,6 +36,8 @@ export default function SettingsDialog({
   onClose,
 }) {
   const [username, setUsername] = useState(user.username);
+  const avatarInput = useRef(null);
+  const [avatarNote, setAvatarNote] = useState(null);
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [saving, setSaving] = useState(false);
@@ -194,6 +198,66 @@ export default function SettingsDialog({
     }
   };
 
+  /**
+   * Take whatever photo they picked and make it a small square.
+   *
+   * In the browser rather than on the server: a phone camera file is several
+   * megabytes of a rectangle, and shipping that up to store it as a 32-pixel
+   * circle is a waste of everyone's time. 256 is twice the biggest size it's
+   * ever drawn at, so it stays sharp on a retina screen.
+   */
+  const squareToDataUrl = (file) =>
+    new Promise((resolve, reject) => {
+      const image = new Image();
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error("That file couldn't be read"));
+      image.onerror = () => reject(new Error("That doesn't look like an image"));
+      image.onload = () => {
+        const side = Math.min(image.width, image.height);
+        const canvas = document.createElement("canvas");
+        canvas.width = canvas.height = 256;
+        const context = canvas.getContext("2d");
+        // Centre crop: faces are in the middle of photographs.
+        context.drawImage(
+          image,
+          (image.width - side) / 2,
+          (image.height - side) / 2,
+          side,
+          side,
+          0,
+          0,
+          256,
+          256
+        );
+        resolve(canvas.toDataURL("image/jpeg", 0.85));
+      };
+      reader.onload = () => (image.src = reader.result);
+      reader.readAsDataURL(file);
+    });
+
+  const chooseAvatar = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    setAvatarNote(null);
+    try {
+      const { user: next } = await api.setAvatar(await squareToDataUrl(file));
+      onUserChanged(next);
+    } catch (err) {
+      setAvatarNote({ error: true, text: err.message });
+    }
+  };
+
+  const clearAvatar = async () => {
+    setAvatarNote(null);
+    try {
+      const { user: next } = await api.removeAvatar();
+      onUserChanged(next);
+    } catch (err) {
+      setAvatarNote({ error: true, text: err.message });
+    }
+  };
+
   const chooseFile = async (event) => {
     const file = event.target.files?.[0];
     event.target.value = "";
@@ -225,8 +289,19 @@ export default function SettingsDialog({
       </p>
     );
 
+  // Opened from the sidebar's Library entry: the dialog is one long page,
+  // so it starts at the section that was asked for rather than at the top.
+  const focusRef = useRef(null);
+  useEffect(() => {
+    if (focus && focusRef.current)
+      focusRef.current.scrollIntoView({ block: "start", behavior: "auto" });
+  }, [focus, documents]);
+
   const Section = ({ title, description, children }) => (
-    <section className="border-t border-[var(--border)] px-5 py-4 first:border-t-0">
+    <section
+      ref={title === focus ? focusRef : null}
+      className="scroll-mt-2 border-t border-[var(--border)] px-5 py-4 first:border-t-0"
+    >
       <h3 className="text-[length:var(--fs-sm2)] font-medium">{title}</h3>
       {description && (
         <p className="mt-0.5 text-[length:var(--fs-xs)] text-[var(--muted)]">
@@ -262,8 +337,41 @@ export default function SettingsDialog({
         </header>
 
         <Section
+          title="Picture"
+          description="Shown next to your name. Square-cropped and shrunk in the browser before it's sent."
+        >
+          <div className="flex items-center gap-3">
+            <Avatar user={user} size={56} />
+            <button
+              onClick={() => avatarInput.current?.click()}
+              className="rounded-lg border border-[var(--border)] px-3 py-1.5
+                         text-[length:var(--fs-sm)] hover:bg-[var(--hover)]"
+            >
+              {user.avatar ? "Change picture" : "Add a picture"}
+            </button>
+            {user.avatar && (
+              <button
+                onClick={clearAvatar}
+                className="rounded-lg px-3 py-1.5 text-[length:var(--fs-sm)] text-[var(--muted)]
+                           hover:bg-[var(--hover)] hover:text-[var(--danger)]"
+              >
+                Remove
+              </button>
+            )}
+            <input
+              ref={avatarInput}
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              onChange={chooseAvatar}
+              className="hidden"
+            />
+          </div>
+          {note(avatarNote)}
+        </Section>
+
+        <Section
           title="Account"
-          description="Changing either one needs your current password."
+          description="Changing your username or password needs your current password."
         >
           <label className="block space-y-1">
             <span className="text-[length:var(--fs-xs)] text-[var(--muted)]">Username</span>
