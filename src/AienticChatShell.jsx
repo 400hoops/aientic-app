@@ -1447,28 +1447,19 @@ export default function AienticChatShell({
             {messages.length === 0 && (
               // m-auto centres it in the column once the column is at least as
               // tall as the scroller.
-              // The first screen names what you're about to talk to, in the
-              // display face, because that's the one fact that changes what
-              // you'd type next. No suggested prompts: this is a console for
-              // your own models, not an assistant looking for something to do.
-              <div className="m-auto max-w-md text-center">
-                <p className="ui-label animate-fade-up">
-                  {privateMode ? "Private chat" : "New conversation"}
+              // m-auto centres it in the column once the column is at least as
+              // tall as the scroller.
+              <div className="m-auto text-center">
+                <p className="animate-fade-up text-[length:var(--fs-lg)] text-[var(--text-soft)]">
+                  {privateMode ? "You're in a private chat" : "What are we testing today?"}
                 </p>
-                <p className="wordmark mt-3 animate-fade-up text-[length:var(--fs-lg)]
-                              leading-tight text-[var(--text)] [animation-delay:60ms]">
+                <p className="mt-2 animate-fade-up text-[length:var(--fs-sm2)] text-[var(--faint)]
+                            [animation-delay:90ms]">
                   {privateMode
-                    ? "Nothing here is written down"
-                    : activeModel?.label || "No models configured"}
-                </p>
-                <p className="mt-3 animate-fade-up text-[length:var(--fs-sm2)] leading-relaxed
-                              text-[var(--muted)] [animation-delay:120ms]">
-                  {privateMode
-                    ? "The server keeps no copy of this conversation. Closing the view is the delete."
+                    ? "Nothing here is written to the server. Closing this view is the delete."
                     : activeModel
-                      ? activeModel.note ||
-                        "Ask a question, paste an article, or drop a document in."
-                      : "An admin adds model endpoints under Admin → Endpoints."}
+                      ? `${activeModel.label}${activeModel.note ? ` · ${activeModel.note}` : ""}`
+                      : "No models configured yet."}
                 </p>
               </div>
             )}
