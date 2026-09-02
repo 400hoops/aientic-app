@@ -1614,20 +1614,6 @@ export default function AienticChatShell({
           </span>
         )}
 
-        {/* The right of the bar was empty. It now says what is answering in
-            this conversation and whether that model is loaded — the two
-            facts you'd otherwise open the picker to check. */}
-        {!conversation && activeModel && (
-          <span className="ml-auto flex shrink-0 items-center gap-2 pr-1 max-md:hidden">
-            {modelStatus[activeModel.id] === "loaded" && (
-              <span
-                title="Loaded in memory"
-                className="h-[6px] w-[6px] rounded-full bg-[var(--ok)]"
-              />
-            )}
-            <span className="ui-label">{activeModel.label}</span>
-          </span>
-        )}
         {/* Private chat: a state this conversation can be in, so it belongs
             with the conversation rather than in the sidebar's list of
             destinations. No filled background — it's a mode toggle, not a
@@ -1642,8 +1628,7 @@ export default function AienticChatShell({
                 ? "Leave the private chat"
                 : "Start a private chat — nothing is written down"
             }
-            className={`shrink-0 rounded-md p-1.5 transition-colors
-                        ${activeModel ? "" : "ml-auto"}
+            className={`ml-auto shrink-0 rounded-md p-1.5 transition-colors
                         ${privateMode
                           ? "text-[var(--accent)]"
                           : "text-[var(--muted)] hover:text-[var(--text)]"}`}
