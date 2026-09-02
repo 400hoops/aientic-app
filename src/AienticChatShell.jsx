@@ -1666,7 +1666,8 @@ export default function AienticChatShell({
                       <>
                         <div
                           className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md
-                                      bg-[var(--hover)] px-4 py-2.5 text-[length:var(--fs-md)] leading-[1.65]"
+                                      bg-[var(--hover)] px-4 py-2.5 font-sans
+                                      text-[length:var(--fs-md)] leading-[1.65]"
                         >
                           {m.attachments?.length > 0 && (
                             <span className="mb-1.5 flex flex-col gap-1">
@@ -1745,7 +1746,9 @@ export default function AienticChatShell({
                     <div className="ui-label mb-2">{m.model}</div>
                   )}
                   <Reasoning text={m.reasoning} />
-                  <Markdown>{m.content}</Markdown>
+                  <div className="answer">
+                    <Markdown>{m.content}</Markdown>
+                  </div>
 
                   {/* What the answer had in front of it. Shown after the
                       answer, not before: it's for checking, and checking
