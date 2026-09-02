@@ -36,12 +36,12 @@ export default defineConfig({
   projects: [
     // One sign-in per run, saved and reused: see tests/e2e/helpers.js.
     // Node-level, no browser, no server: the link reader's own rules.
-    { name: "unit", testMatch: /readpage\.spec\.js/ },
+    { name: "unit", testMatch: /(readpage|import)\.spec\.js/ },
     { name: "setup", testMatch: /auth\.setup\.js/ },
     {
       name: "desktop",
       dependencies: ["setup"],
-      testIgnore: /readpage\.spec\.js/,
+      testIgnore: /(readpage|import)\.spec\.js/,
       use: { ...devices["Desktop Chrome"], storageState: "tests/.auth/admin.json" },
     },
   ],

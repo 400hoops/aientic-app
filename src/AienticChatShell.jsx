@@ -17,6 +17,7 @@ import { forgetScroll, recallScroll, rememberScroll } from "./scrollMemory.js";
 import ArtifactPanel from "./ArtifactPanel.jsx";
 import { ArtifactContext } from "./ArtifactContext.js";
 import { artifactsIn } from "../shared/artifacts.js";
+import { importedSummary } from "./importSummary.js";
 import {
   IconArrowDown,
   IconArrowUp,
@@ -1024,9 +1025,7 @@ export default function AienticChatShell({
       setNotice(`Importing ${file.name}…`);
       try {
         const result = await onImportChats(file);
-        setNotice(
-          `Imported ${result.imported} chat${result.imported === 1 ? "" : "s"} from ${file.name}.`
-        );
+        setNotice(importedSummary(result));
       } catch (err) {
         setNotice(null);
         setImgError(err.message);

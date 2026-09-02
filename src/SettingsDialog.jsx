@@ -12,6 +12,7 @@ import {
 } from "./Icons.jsx";
 import Avatar from "./Avatar.jsx";
 import ModelPicker from "./ModelPicker.jsx";
+import { importedSummary } from "./importSummary.js";
 
 /**
  * Everything about *your* account, in one modal behind the name in the
@@ -291,9 +292,7 @@ export default function SettingsDialog({
     setImportNote({ text: `Importing ${file.name}…` });
     try {
       const result = await onImport(file);
-      setImportNote({
-        text: `Imported ${result.imported} chat${result.imported === 1 ? "" : "s"}, ${result.messages} messages.`,
-      });
+      setImportNote({ text: importedSummary(result) });
     } catch (err) {
       setImportNote({ error: true, text: err.message });
     }

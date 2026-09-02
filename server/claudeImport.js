@@ -4,6 +4,11 @@
  * What the export actually is: a zip, mailed by Anthropic when you press
  * Settings → Privacy → Export data, holding `conversations.json` (plus
  * `projects.json` and `users.json`, which are not chats and are ignored).
+ * An export is now mailed as several numbered zips rather than one —
+ * `conversations000.zip`, `memories000.zip`, `light_metadata000.zip`,
+ * `feedback000.zip` — so any of them can be dropped on the importer and each
+ * is recognised by what's inside it rather than by its name.
+ *
  * `conversations.json` is one array, each entry roughly:
  *
  *   { uuid, name, created_at, updated_at,
@@ -83,32 +88,45 @@ const time = (value, fallback) => {
   return Number.isNaN(ms) ? fallback : ms;
 };
 
-/** Flatten one Claude message body into Markdown-ish text. */
+/**
+ * The unsupported-block placeholder Claude's own export writes into `text`.
+ *
+ * A message whose reply came alongside a tool call has a `text` field that
+ * begins with a fenced "This block is not supported on your current device
+ * yet" — a note the export tool wrote for a reader, not part of what was
+ * said. Imported as-is it becomes the first thing on screen in every answer
+ * of a chat that used memory or search.
+ */
+const PLACEHOLDER =
+  /```\s*\n?This block is not supported on your current device yet\.?\s*\n?```/gi;
+
+const clean = (text) => String(text).replace(PLACEHOLDER, "").trim();
+
+/**
+ * Flatten one Claude message body into Markdown-ish text.
+ *
+ * Tool calls and their results are dropped rather than transcribed. They
+ * used to come through as pretty-printed JSON, which meant a chat where
+ * Claude wrote to its memory four times arrived as four screens of
+ * `{"tool": "memory_write", ...}` with the actual sentences buried under
+ * them. They also don't survive the trip in any useful sense: this app has
+ * no memory tool to replay them against, so what's left is a transcript of
+ * machinery from a different program. What was *said* is the text blocks.
+ */
 function messageText(message) {
   const blocks = Array.isArray(message.content) ? message.content : null;
-  if (!blocks) return String(message.text || "").trim();
+  if (!blocks) return clean(message.text || "");
 
   const out = [];
   for (const block of blocks) {
     if (!block || typeof block !== "object") continue;
-    if (block.type === "text" && block.text) out.push(String(block.text));
-    else if (block.type === "tool_use" && block.name)
-      out.push(`\`\`\`json\n${JSON.stringify(
-        { tool: block.name, input: block.input ?? null },
-        null,
-        2
-      )}\n\`\`\``);
-    else if (block.type === "tool_result" && block.content)
-      out.push(
-        typeof block.content === "string"
-          ? block.content
-          : JSON.stringify(block.content, null, 2)
-      );
+    if (block.type === "text" && block.text) out.push(clean(block.text));
   }
+
   // `text` is the whole message when there are no usable blocks (older
   // exports leave content empty on some rows).
-  if (!out.length && message.text) out.push(String(message.text));
-  return out.join("\n\n").trim();
+  const joined = out.filter(Boolean).join("\n\n").trim();
+  return joined || clean(message.text || "");
 }
 
 /** Thinking blocks become our own `reasoning`, shown the same way. */
@@ -185,26 +203,98 @@ export function convertClaudeExport(raw, userId) {
   return conversations;
 }
 
+/* ---------- memories ------------------------------------------------------ */
+
 /**
- * The whole path from an uploaded file to conversations: a zip from the
- * export mail, the `conversations.json` out of it, or a single chat in the
- * shape this app writes to `data/chats/`.
+ * `memories/<account>.json` — what Claude had written down about you.
+ *
+ * The shape is a list of little Markdown files:
+ *
+ *   { memory_files: [ { path: "/topics/pets.md", content: "---\n…---\n\n- …" } ] }
+ *
+ * They map onto this app's own memory list almost exactly, because they're
+ * the same idea: short standing facts told to the model at the start of
+ * every chat. What doesn't map is the filing — paths, YAML front matter,
+ * `[stated]` provenance tags — so that's dropped and the bullets underneath
+ * are kept, one memory per line, which is the unit this app stores.
+ */
+export function convertMemories(raw) {
+  const files = Array.isArray(raw?.memory_files) ? raw.memory_files : [];
+  const memories = [];
+
+  for (const file of files) {
+    const body = String(file?.content || "")
+      // YAML front matter: a name and a description of the file itself,
+      // which is filing rather than anything you'd want said back to you.
+      .replace(/^---\n[\s\S]*?\n---\n?/, "");
+
+    for (const line of body.split("\n")) {
+      const text = line
+        .replace(/^\s*[-*]\s+/, "")
+        // [stated], [inferred]: where Claude got it from. Useful to Claude,
+        // noise in a list you're going to read and edit yourself.
+        .replace(/^\[[a-z]+\]\s*/i, "")
+        .trim();
+      if (text && !text.startsWith("#") && text.length > 2) memories.push(text);
+    }
+  }
+  // The same fact can be written into two files ("has a dog named Hazel" in
+  // both /topics/pets.md and /people/…); the list is read by a person.
+  return [...new Set(memories)];
+}
+
+/* ---------- the whole job ------------------------------------------------- */
+
+/**
+ * What an uploaded file holds.
+ *
+ * An export is mailed as several numbered zips these days —
+ * `conversations000.zip`, `memories000.zip`, `light_metadata000.zip`,
+ * `feedback000.zip` — and there is no way for someone to know which one this
+ * app wants, so it takes any of them and works out what's inside. A bare
+ * `conversations.json`, and a single chat in the shape this app writes to
+ * `data/chats/`, are read the same way.
  */
 export function parseUpload(buffer, userId) {
-  let text;
-  if (looksLikeZip(buffer)) {
-    const files = unzip(buffer);
-    const found = files.find((f) => /(^|\/)conversations\.json$/.test(f.name));
-    if (!found)
-      throw new Error("No conversations.json inside that zip — is it the Claude export?");
-    text = found.data.toString("utf8");
-  } else {
-    text = buffer.toString("utf8");
+  if (!looksLikeZip(buffer))
+    return { conversations: fromConversationsJson(buffer.toString("utf8"), userId), memories: [] };
+
+  const files = unzip(buffer);
+  const read = (file) => {
+    try {
+      return JSON.parse(file.data.toString("utf8").replace(/^\ufeff/, ""));
+    } catch {
+      return null;
+    }
+  };
+
+  const chats = files.find((f) => /(^|\/)conversations\.json$/.test(f.name));
+  if (chats)
+    return { conversations: fromConversationsJson(chats.data.toString("utf8"), userId), memories: [] };
+
+  const memoryFiles = files.filter((f) => /(^|\/)memories\//.test(f.name));
+  if (memoryFiles.length) {
+    const memories = memoryFiles.flatMap((f) => convertMemories(read(f)));
+    if (memories.length) return { conversations: [], memories };
   }
 
+  // Say which zip this is and which one to reach for, rather than the same
+  // "no conversations.json" for all four.
+  const what = files.some((f) => /(^|\/)users\.json$/.test(f.name))
+    ? "your account details"
+    : files.some((f) => /(^|\/)reflections\//.test(f.name))
+      ? "the feedback you left on answers"
+      : "no chats and no memories";
+  throw new Error(
+    `That zip holds ${what}. The chats are in the one named conversations, and what Claude remembered is in the one named memories.`
+  );
+}
+
+/** A `conversations.json`, or one chat, as text. */
+function fromConversationsJson(text, userId) {
   let parsed;
   try {
-    parsed = JSON.parse(text.replace(/^﻿/, ""));
+    parsed = JSON.parse(text.replace(/^\ufeff/, ""));
   } catch {
     throw new Error("That file isn't valid JSON");
   }

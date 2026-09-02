@@ -1183,13 +1183,14 @@ app.post(
         : Buffer.alloc(0);
     if (!buffer.length) return bad(res, 400, "No file was uploaded");
 
-    let imported;
+    let parsed;
     try {
-      imported = parseUpload(buffer, req.user.id);
+      parsed = parseUpload(buffer, req.user.id);
     } catch (err) {
       return bad(res, 400, err.message);
     }
-    if (!imported.length)
+    const imported = parsed.conversations;
+    if (!imported.length && !parsed.memories.length)
       return bad(res, 400, "No conversations with any messages in that file");
 
     // Imported chats have no endpoint of their own — reading one is fine,
@@ -1200,10 +1201,28 @@ app.post(
       db.conversations.push(convo);
       touchConversation(convo);
     }
+
+    // What Claude had written down about you, added to this app's own memory
+    // list. Ones already there are skipped, so importing the same zip twice
+    // doesn't say everything twice.
+    let addedMemories = 0;
+    if (parsed.memories.length) {
+      const memories = memoriesFor(req.user.id);
+      const already = new Set(memories.map((m) => m.text.trim().toLowerCase()));
+      for (const text of parsed.memories) {
+        if (memories.length >= MAX_MEMORIES) break;
+        if (already.has(text.toLowerCase())) continue;
+        already.add(text.toLowerCase());
+        memories.push({ id: uid(), text, createdAt: Date.now() });
+        addedMemories++;
+      }
+    }
+
     save();
     ok(res, {
       imported: imported.length,
       messages: imported.reduce((n, c) => n + c.messages.length, 0),
+      memories: addedMemories,
       conversations: db.conversations
         .filter((c) => c.userId === req.user.id)
         .sort((a, b) => b.updatedAt - a.updatedAt)
