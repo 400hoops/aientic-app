@@ -29,6 +29,13 @@ import {
 import { parseUpload } from "./claudeImport.js";
 import { readUrl } from "./readpage.js";
 import {
+  addDocument,
+  library,
+  removeDocument,
+  search,
+  summarise,
+} from "./knowledge.js";
+import {
   attachUser,
   requireAuth,
   requireAdmin,
@@ -762,6 +769,7 @@ app.delete("/api/admin/users/:id", requireAdmin, (req, res) => {
   db.conversations = db.conversations.filter((c) => c.userId !== removed.id);
   delete db.memories[removed.id];
   delete db.skills[removed.id];
+  delete db.knowledge[removed.id];
   for (const [token, session] of Object.entries(db.sessions))
     if (session.userId === removed.id) delete db.sessions[token];
   save();
@@ -775,6 +783,7 @@ const summary = (c) => ({
   title: c.title,
   endpointId: c.endpointId,
   skillIds: c.skillIds || [],
+  useKnowledge: !!c.useKnowledge,
   pinned: !!c.pinned,
   createdAt: c.createdAt,
   updatedAt: c.updatedAt,
@@ -1183,6 +1192,72 @@ app.get("/api/conversations/:id/export", requireAuth, (req, res) => {
   );
 });
 
+/* ---------- knowledge ----------------------------------------------------- */
+
+/**
+ * The documents a conversation can look things up in.
+ *
+ * Added once, used by any chat that turns retrieval on — as opposed to an
+ * attachment, which belongs to the one turn it rode in on. Retrieval itself
+ * lives in knowledge.js; these routes are the library's front desk.
+ */
+app.get("/api/knowledge", requireAuth, (req, res) =>
+  ok(res, { documents: library(req.user.id).map(summarise) })
+);
+
+app.post("/api/knowledge", requireAuth, async (req, res) => {
+  const { title, text, url } = req.body || {};
+  try {
+    // A URL is fetched and read here, the same way a pasted link is — so a
+    // page can go into the library without a round trip through the
+    // composer.
+    if (url && !text) {
+      const page = await readUrl(url);
+      return ok(res, {
+        document: summarise(
+          addDocument(req.user.id, {
+            title: title || page.title,
+            text: page.text,
+            url: page.url,
+            source: "link",
+          })
+        ),
+        documents: library(req.user.id).map(summarise),
+      });
+    }
+    const document = addDocument(req.user.id, { title, text, url, source: "text" });
+    ok(res, {
+      document: summarise(document),
+      documents: library(req.user.id).map(summarise),
+    });
+  } catch (err) {
+    bad(res, 400, err.message);
+  }
+});
+
+app.delete("/api/knowledge/:id", requireAuth, (req, res) => {
+  removeDocument(req.user.id, req.params.id);
+  ok(res, { documents: library(req.user.id).map(summarise) });
+});
+
+/**
+ * What a question would retrieve, without asking a model anything.
+ *
+ * Retrieval that can't be inspected is retrieval nobody can debug: when an
+ * answer misses something you know is in there, this is how you find out
+ * whether the passage was never retrieved or was retrieved and ignored.
+ */
+app.get("/api/knowledge/search", requireAuth, (req, res) =>
+  ok(res, {
+    results: search(req.user.id, String(req.query.q || "")).map((hit) => ({
+      title: hit.doc.title,
+      url: hit.doc.url,
+      score: Math.round(hit.score * 100) / 100,
+      text: hit.text.slice(0, 400),
+    })),
+  })
+);
+
 /* ---------- reading a link ----------------------------------------------- */
 
 /**
@@ -1231,7 +1306,7 @@ app.post("/api/read-url", requireAuth, async (req, res) => {
  * yours. What's missing is only the writing down.
  */
 app.post("/api/private/stream", requireAuth, async (req, res) => {
-  const { messages, endpointId, timeZone, skillIds } = req.body || {};
+  const { messages, endpointId, timeZone, skillIds, useKnowledge } = req.body || {};
   const endpoint = db.endpoints.find((e) => e.id === endpointId);
   if (!endpoint) return bad(res, 400, "That model is no longer configured");
   if (!Array.isArray(messages) || !messages.length)
@@ -1267,6 +1342,7 @@ app.post("/api/private/stream", requireAuth, async (req, res) => {
     title: "Private chat",
     endpointId: endpoint.id,
     skillIds: Array.isArray(skillIds) ? skillIds.filter((id) => mine.has(id)) : [],
+    useKnowledge: useKnowledge === true,
     createdAt: Date.now(),
     updatedAt: Date.now(),
     messages: history,
@@ -1307,7 +1383,10 @@ app.post("/api/conversations/:id/stream", requireAuth, async (req, res) => {
   if (isGenerating(convo.id))
     return bad(res, 409, "That conversation is already generating");
 
-  const { content, endpointId, regenerate, timeZone, skillIds } = req.body || {};
+  const { content, endpointId, regenerate, timeZone, skillIds, useKnowledge } =
+    req.body || {};
+  // Sticky, like skills: turn it on once and the follow-ups keep it.
+  if (typeof useKnowledge === "boolean") convo.useKnowledge = useKnowledge;
   // Skills stay attached to the conversation once chosen, so a follow-up
   // question keeps the same instructions without re-picking them.
   if (Array.isArray(skillIds)) {

@@ -14,6 +14,7 @@ import {
   Ghost,
   Download,
   FileText,
+  Library,
   Link2,
   LogOut,
   MoreHorizontal,
@@ -50,6 +51,7 @@ export const IconCopy = thin(Copy, "IconCopy");
 export const IconDownload = thin(Download, "IconDownload");
 export const IconFileText = thin(FileText, "IconFileText");
 export const IconGhost = thin(Ghost, "IconGhost");
+export const IconLibrary = thin(Library, "IconLibrary");
 export const IconLink = thin(Link2, "IconLink");
 export const IconLogOut = thin(LogOut, "IconLogOut");
 export const IconMoon = thin(Moon, "IconMoon");

@@ -44,8 +44,17 @@ export function startStubModel(port = 0) {
       // The reply names what it saw, so a test can assert on it.
       // "LONG" buys the test a couple of seconds of streaming to act
       // during — queueing a message, pressing Stop — without any sleeps.
+      // Retrieval test: echo a passage back, so "the model was handed this"
+      // is something a test can see rather than infer.
+      const passage = request.messages?.find(
+        (m) => m.role === "system" && String(m.content).includes("<passage")
+      );
       const long = /LONG/.test(asked);
-      const reply = long
+      const reply = passage
+        ? "From your documents: " +
+          (String(passage.content).match(/citric acid[^.]*\./i)?.[0] ||
+            "a passage was supplied.")
+        : long
         ? "A longer answer, arriving a word at a time. ".repeat(6)
         : asked.includes("kettle")
           ? "The piece is about kettles."

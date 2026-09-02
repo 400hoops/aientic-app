@@ -109,6 +109,18 @@ export const exportChatUrl = (id, format = "md") =>
 export const readUrl = (url, signal) =>
   request("/read-url", { method: "POST", body: { url }, signal });
 
+/* ---------- knowledge ---------------------------------------------------- */
+
+export const listKnowledge = () => request("/knowledge");
+/** Either { title, text } or { url } — a link is fetched and read server-side. */
+export const addKnowledge = (document) =>
+  request("/knowledge", { method: "POST", body: document });
+export const removeKnowledge = (id) =>
+  request(`/knowledge/${id}`, { method: "DELETE" });
+/** What a question would retrieve, with no model involved. */
+export const searchKnowledge = (q) =>
+  request(`/knowledge/search?q=${encodeURIComponent(q)}`);
+
 /* ---------- skills ------------------------------------------------------- */
 
 export const listSkills = () => request("/skills");
@@ -211,7 +223,16 @@ async function readSse(res, handlers) {
 
 export async function streamTurn(
   conversationId,
-  { content, endpointId, regenerate = false, images, attachments, skillIds, signal },
+  {
+    content,
+    endpointId,
+    regenerate = false,
+    images,
+    attachments,
+    skillIds,
+    useKnowledge,
+    signal,
+  },
   handlers = {},
 ) {
   const res = await fetch(`/api/conversations/${conversationId}/stream`, {
@@ -225,6 +246,7 @@ export async function streamTurn(
       images,
       attachments,
       skillIds,
+      useKnowledge,
       // Where the user is, so {{CURRENT_WEEKDAY}} / {{CURRENT_DATETIME}} /
       // {{CURRENT_TIMEZONE}} resolve to their clock, not the server's.
       timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
@@ -266,7 +288,7 @@ export async function attachStream(conversationId, { signal }, handlers = {}) {
  * /api/private/stream — the server keeps none of it.
  */
 export async function streamPrivateTurn(
-  { messages, endpointId, skillIds, signal },
+  { messages, endpointId, skillIds, useKnowledge, signal },
   handlers = {},
 ) {
   const res = await fetch("/api/private/stream", {
@@ -277,6 +299,7 @@ export async function streamPrivateTurn(
       messages,
       endpointId,
       skillIds,
+      useKnowledge,
       timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     }),
     signal,

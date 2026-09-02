@@ -12,6 +12,7 @@
  */
 import { db, save, uid } from "./storage.js";
 import { touchConversation } from "./chatFiles.js";
+import { retrieve } from "./knowledge.js";
 import {
   chatUrl,
   authHeaders,
@@ -221,6 +222,7 @@ export async function streamCompletion({
     createdAt: Date.now(),
     model: endpoint.label,
   };
+
   // A private chat hands us a conversation that isn't in the store at all
   // (see /api/private/stream). Streaming it is identical; writing it down
   // is what must not happen, here or at any checkpoint below.
@@ -314,6 +316,37 @@ export async function streamCompletion({
   for (const skill of skills)
     if (skill.always || attached.has(skill.id))
       system.push(`# ${skill.name}\n\n${skill.instructions}`);
+
+  /**
+   * Retrieval: the passages from the user's library that bear on what they
+   * just asked, if they've asked for their library to be used.
+   *
+   * The instruction around them matters as much as the passages do. A model
+   * handed context with no framing treats it as ground truth and will
+   * cheerfully answer from it even when it doesn't fit the question — so
+   * this says what the passages are, that they may be irrelevant, and that
+   * saying so is a valid answer.
+   */
+  let sources = [];
+  if (conversation.useKnowledge && user) {
+    const question = [...history].reverse().find((m) => m.role === "user");
+    const found = question ? retrieve(user.id, question.content) : null;
+    if (found) {
+      sources = found.sources;
+      // Kept on the answer itself, so the transcript still shows what it
+      // drew on when it's read back tomorrow.
+      assistant.sources = sources;
+      system.push(
+        "Passages from " +
+          (user.username || "the user") +
+          "'s own documents, retrieved by keyword for this question. They " +
+          "may or may not be relevant. Use them where they answer the " +
+          "question and say so; where they don't, answer normally and don't " +
+          "pretend they did.\n\n" +
+          found.passages
+      );
+    }
+  }
 
   const memories = user ? db.memories?.[user.id] || [] : [];
   if (memories.length)

@@ -20,6 +20,7 @@ import {
   IconChevronRight,
   IconFileText,
   IconGhost,
+  IconLibrary,
   IconLink,
   IconPanel,
   IconPlus,
@@ -226,6 +227,23 @@ export default function AienticChatShell({
     };
   }, [skillsOpen]);
 
+  /* ---------- knowledge --------------------------------------------------
+   *
+   * The library is per account; whether a conversation draws on it is per
+   * conversation, and sticky once set. Off by default: most questions aren't
+   * about your documents, and retrieval that fires on every turn puts
+   * unrelated passages in front of the model for no reason.
+   */
+  const [knowledge, setKnowledge] = useState([]);
+  const [useKnowledge, setUseKnowledge] = useState(false);
+
+  useEffect(() => {
+    api
+      .listKnowledge()
+      .then((res) => setKnowledge(res.documents))
+      .catch(() => {});
+  }, []);
+
   const optional = skills.filter((s) => !s.always);
   const toggleSkill = (id) =>
     setSkillIds((prev) =>
@@ -339,6 +357,7 @@ export default function AienticChatShell({
         if (cancelled) return;
         setConversation(conversation);
         setSkillIds(conversation.skillIds || []);
+        setUseKnowledge(!!conversation.useKnowledge);
         if (conversation.endpointId) onModelChange(conversation.endpointId);
 
         // The answer is still being written on the server — a refresh mid-run
@@ -1105,6 +1124,7 @@ export default function AienticChatShell({
         images: turn.images,
         attachments: turn.attachments,
         skillIds,
+        useKnowledge,
         // A first turn that never produced a message leaves an empty chat
         // in the sidebar; run() clears it up rather than stranding it, and
         // hands the text and photos back to the composer. Neither field is
@@ -1128,6 +1148,7 @@ export default function AienticChatShell({
     run,
     skillIds,
     streaming,
+    useKnowledge,
   ]);
 
   /* ---------- the queue --------------------------------------------------
@@ -1193,7 +1214,7 @@ export default function AienticChatShell({
         regenerate: true,
         endpointId: activeModel.id,
         ...(privateMode
-          ? { private: true, messages: trimmed, skillIds }
+          ? { private: true, messages: trimmed, skillIds, useKnowledge }
           : {}),
       });
     } finally {
@@ -1284,6 +1305,7 @@ export default function AienticChatShell({
         private: true,
         messages,
         skillIds,
+        useKnowledge,
       });
       return;
     }
@@ -1699,6 +1721,35 @@ export default function AienticChatShell({
                   )}
                   <Reasoning text={m.reasoning} />
                   <Markdown>{m.content}</Markdown>
+
+                  {/* What the answer had in front of it. Shown after the
+                      answer, not before: it's for checking, and checking
+                      comes second. */}
+                  {m.sources?.length > 0 && (
+                    <div className="mt-3 flex flex-wrap items-center gap-1.5">
+                      <span className="ui-label">Sources</span>
+                      {m.sources.map((source) => {
+                        // An <a> without an href is a link that isn't one:
+                        // it looks clickable, does nothing, and reads as a
+                        // link to a screen reader. Only pages get anchors.
+                        const Tag = source.url ? "a" : "span";
+                        return (
+                          <Tag
+                            key={source.id}
+                            {...(source.url
+                              ? { href: source.url, target: "_blank", rel: "noreferrer" }
+                              : {})}
+                            className={`flex items-center gap-1 rounded-md bg-[var(--panel)] px-2 py-0.5
+                                        text-[length:var(--fs-xs)] text-[var(--text-soft)]
+                                        ${source.url ? "hover:bg-[var(--hover)]" : ""}`}
+                          >
+                            <IconLibrary className="h-[12px] w-[12px] text-[var(--muted)]" />
+                            {source.title}
+                          </Tag>
+                        );
+                      })}
+                    </div>
+                  )}
                   {/* A single blinking caret line says "still thinking";
                       the same caret trails the text once tokens land. */}
                   {streaming && isLast && (
@@ -2007,6 +2058,28 @@ export default function AienticChatShell({
                     status={modelStatus}
                     matchParent
                   />
+                  {/* Retrieval, on or off for this conversation. Hidden
+                      when the library is empty — a switch with nothing
+                      behind it is worse than no switch. */}
+                  {knowledge.length > 0 && (
+                    <button
+                      onClick={() => setUseKnowledge((on) => !on)}
+                      title={
+                        useKnowledge
+                          ? `Looking things up in your ${knowledge.length} document(s)`
+                          : "Look things up in your documents"
+                      }
+                      aria-pressed={useKnowledge}
+                      className={`flex h-7 items-center gap-1.5 rounded-lg px-2
+                                  text-[length:var(--fs-sm)] transition-colors
+                                  ${useKnowledge
+                                    ? "bg-[var(--accent-soft)] text-[var(--accent)]"
+                                    : "text-[var(--muted)] hover:bg-[var(--hover)]"}`}
+                    >
+                      <IconLibrary className="h-[17px] w-[17px]" />
+                    </button>
+                  )}
+
                   {/* Skills: the user's own named instruction blocks. Hidden
                       entirely when none are defined — an empty menu is worse
                       than no button. */}

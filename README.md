@@ -235,6 +235,36 @@ dashboard — only sensible on a server whose accounts you all trust, since
 with it on anyone signed in can have the server fetch your router's admin
 page and show them the reply.
 
+## Knowledge, and how retrieval works here
+
+Settings → **Knowledge** is a library of documents any conversation can look
+things up in: add a page by link, drop `.txt`/`.md`/`.csv` files, or paste
+text. Turn it on for a conversation with the library button in the composer
+— it's off by default and sticky once set — and every question you ask is
+used to pull the handful of passages that bear on it into that turn. The
+answer lists the documents it drew on.
+
+Retrieval is **BM25 over the text**, not embeddings, and that's a trade
+rather than a shortcut. Embeddings would need a second model loaded and
+reachable at all times, competing for VRAM with the one you actually chat
+to, plus a re-index of everything whenever it changes. Keyword search needs
+nothing but the text, is exact about names, numbers and error codes — which
+is most of what anyone searches their own notes for — and can show its
+working: `GET /api/knowledge/search?q=…` returns exactly what a question
+would retrieve, with scores, so a missing answer can be diagnosed as "never
+retrieved" or "retrieved and ignored" rather than guessed at.
+
+What it can't do is match a paraphrase with no words in common. Two things
+soften that: light stemming, so "how do I descale it" finds a handbook that
+says "descaling"; and the passages go to the model framed as *material to
+check*, explicitly allowed to be irrelevant, so an off-target retrieval
+produces a normal answer rather than a confident wrong one.
+
+Documents are chunked on paragraph boundaries (~900 characters, with
+overlap) so a retrieved passage is a thought rather than a slice of one, and
+no more than three passages come from any one document — three from the
+wrong file and none from the right one is the classic failure.
+
 ## Tests
 
 ```bash

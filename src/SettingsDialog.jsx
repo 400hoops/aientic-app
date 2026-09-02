@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 
 import * as api from "./api.js";
 import {
+  IconLibrary,
   IconPlus,
   IconSliders,
   IconSparkles,
@@ -70,6 +71,61 @@ export default function SettingsDialog({
     if (!text) return;
     setDraft("");
     await runMemory(() => api.addMemory(text));
+  };
+
+  /* ---------- knowledge --------------------------------------------------
+   *
+   * Documents any conversation can look things up in, once it's asked to.
+   * Adding one is deliberately three ways round, because that's how they
+   * arrive: a link, a file, or something you paste.
+   */
+  const [documents, setDocuments] = useState(null);
+  const [link, setLink] = useState("");
+  const [adding, setAdding] = useState(false);
+  const [docNote, setDocNote] = useState(null);
+  const docInput = useRef(null);
+
+  useEffect(() => {
+    api
+      .listKnowledge()
+      .then((res) => setDocuments(res.documents))
+      .catch((err) => {
+        setDocuments([]);
+        setDocNote({ error: true, text: err.message });
+      });
+  }, []);
+
+  const addDoc = async (body, describe) => {
+    setDocNote({ text: `Adding ${describe}…` });
+    setAdding(true);
+    try {
+      const { documents: next, document } = await api.addKnowledge(body);
+      setDocuments(next);
+      setDocNote({ text: `Added “${document.title}” — ${document.chunks} passages.` });
+    } catch (err) {
+      setDocNote({ error: true, text: err.message });
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  const addFiles = async (event) => {
+    const files = [...(event.target.files || [])];
+    event.target.value = "";
+    for (const file of files) {
+      const text = await file.text();
+      await addDoc({ title: file.name, text }, file.name);
+    }
+  };
+
+  const removeDoc = async (id) => {
+    try {
+      const { documents: next } = await api.removeKnowledge(id);
+      setDocuments(next);
+      setDocNote(null);
+    } catch (err) {
+      setDocNote({ error: true, text: err.message });
+    }
   };
 
   /* ---------- skills ---------------------------------------------------- */
@@ -329,6 +385,102 @@ export default function SettingsDialog({
             </button>
           </div>
           {note(memoryNote)}
+        </Section>
+
+        <Section
+          title="Knowledge"
+          description="Documents your chats can look things up in — a handbook, meeting notes, a page you keep referring to. Turn it on for a conversation with the library button in the composer; the answer shows which documents it drew on."
+        >
+          {documents === null ? (
+            <p className="text-[length:var(--fs-xs)] text-[var(--muted)]">Loading…</p>
+          ) : documents.length === 0 ? (
+            <p className="text-[length:var(--fs-xs)] text-[var(--faint)]">
+              Nothing in the library yet.
+            </p>
+          ) : (
+            <ul className="space-y-1.5">
+              {documents.map((doc) => (
+                <li
+                  key={doc.id}
+                  className="group flex items-center gap-2 rounded-lg border border-[var(--border)]
+                             bg-[var(--panel)] px-3 py-2"
+                >
+                  <IconLibrary className="h-[15px] w-[15px] shrink-0 text-[var(--muted)]" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[length:var(--fs-sm2)]">
+                      {doc.title}
+                    </span>
+                    {doc.url && (
+                      <a
+                        href={doc.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="block truncate text-[length:var(--fs-xs)] text-[var(--muted)]
+                                   hover:text-[var(--accent)]"
+                      >
+                        {doc.url}
+                      </a>
+                    )}
+                  </span>
+                  <span className="ui-label shrink-0">{doc.chunks} passages</span>
+                  <button
+                    onClick={() => removeDoc(doc.id)}
+                    title="Remove from the library"
+                    className="shrink-0 rounded p-1 text-[var(--faint)] transition
+                               hover:text-[var(--danger)] md:opacity-0 md:group-hover:opacity-100"
+                  >
+                    <IconTrash className="h-[14px] w-[14px]" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          <div className="flex items-center gap-2">
+            <input
+              value={link}
+              onChange={(e) => setLink(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key !== "Enter" || !link.trim()) return;
+                e.preventDefault();
+                const url = link.trim();
+                setLink("");
+                addDoc({ url }, url);
+              }}
+              placeholder="Add a page by link"
+              className={field}
+            />
+            <button
+              onClick={() => {
+                const url = link.trim();
+                setLink("");
+                addDoc({ url }, url);
+              }}
+              disabled={!link.trim() || adding}
+              className="shrink-0 rounded-lg border border-[var(--border)] p-2
+                         hover:bg-[var(--hover)] disabled:opacity-40"
+              title="Fetch and add"
+            >
+              <IconPlus className="h-[16px] w-[16px]" />
+            </button>
+            <button
+              onClick={() => docInput.current?.click()}
+              disabled={adding}
+              className="shrink-0 rounded-lg border border-[var(--border)] px-3 py-2
+                         text-[length:var(--fs-sm)] hover:bg-[var(--hover)] disabled:opacity-40"
+            >
+              Add files
+            </button>
+            <input
+              ref={docInput}
+              type="file"
+              multiple
+              accept=".txt,.md,.markdown,.csv,.log,.rst,text/plain"
+              onChange={addFiles}
+              className="hidden"
+            />
+          </div>
+          {note(docNote)}
         </Section>
 
         <Section
