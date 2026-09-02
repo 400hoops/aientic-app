@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import * as api from "./api.js";
 import { copyText } from "./clipboard.js";
 import PreviewableImage from "./ImageLightbox.jsx";
@@ -9,9 +16,15 @@ import ModelPicker from "./ModelPicker.jsx";
 import {
   IconArrowDown,
   IconArrowUp,
+  IconCheck,
   IconChevronRight,
+  IconFileText,
+  IconGhost,
+  IconLibrary,
+  IconLink,
   IconPanel,
   IconPlus,
+  IconSparkles,
   IconStop,
   IconX,
 } from "./Icons.jsx";
@@ -24,8 +37,61 @@ import {
  * re-validates and reshapes them into image_url parts for the upstream).
  */
 const ATTACH_TYPES = ["image/jpeg", "image/png", "image/gif"];
+
+/* ---------- pasted and dropped text --------------------------------------
+ *
+ * Paste a whole article into the composer and the question you were about
+ * to ask disappears into it — you can't see the box, you can't edit the
+ * end, and the model gets no signal about where the source stops. Past a
+ * few hundred words a paste becomes an attachment instead: named, counted,
+ * removable, and fenced when it goes upstream.
+ *
+ * The threshold is deliberately not "any multi-line paste" — pasting a
+ * stack trace or a paragraph you want to talk about inline should stay
+ * inline. It's the length at which text stops being something you typed.
+ */
+const PASTE_AS_DOC_CHARS = 1200;
+const TEXT_TYPES = ["text/plain", "text/markdown", "text/csv", "application/json"];
+const TEXT_EXTENSIONS = /\.(txt|md|markdown|csv|json|log|rst|tex)$/i;
+const MAX_DOC_BYTES = 400 * 1024;
+const MAX_DOCS = 5;
+
+const isTextFile = (file) =>
+  TEXT_TYPES.includes(file.type) || TEXT_EXTENSIONS.test(file.name || "");
+
+/** "1,240 words" — the useful measure of a thing you're asking about. */
+const wordCount = (text) => (text.trim().match(/\S+/g) || []).length;
+
+/**
+ * A paste that is nothing but a link.
+ *
+ * Deliberately strict: one URL, no surrounding words. "look at
+ * https://…" is a sentence with a link in it, and the person is mid-thought
+ * — going off to fetch it under them would be presumptuous. A bare link
+ * pasted into an empty composer is unambiguous.
+ */
+const BARE_URL = /^https?:\/\/[^\s]+$/i;
+
+/** The first line worth showing as a name, or a fallback. */
+const titleForPaste = (text) => {
+  const line = text
+    .split("\n")
+    .map((l) => l.trim())
+    .find((l) => l.length > 2);
+  if (!line) return "Pasted text";
+  return line.length > 48 ? line.slice(0, 48).trimEnd() + "…" : line;
+};
 const MAX_ATTACHMENTS = 4;
 const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
+
+// Breathing room above a question pinned to the top of the viewport.
+const TOP_GAP = 24;
+
+// The id a private chat answers to. It never reaches the server — see
+// /api/private/stream, which has no conversation to name — but the whole
+// shell is keyed on "which conversation is this", so one constant keeps
+// every path (patchLast, ownStreamRef, the scroll anchor) working as-is.
+const PRIVATE_ID = "private";
 
 const fileToDataUrl = (file) =>
   new Promise((resolve, reject) => {
@@ -95,6 +161,11 @@ export default function AienticChatShell({
   onConversationRenamed,
   onConversationNotFound,
   onConversationsChanged,
+  onImportChats,
+  onTogglePrivate,
+  highlightMessage = null,
+  renamed = null,
+  privateMode = false,
   onConversationDeleted,
   sidebarOpen,
   onShowSidebar,
@@ -103,13 +174,82 @@ export default function AienticChatShell({
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState(null);
-  const [editing, setEditing] = useState(null); // { id, text }
+  const [editing, setEditing] = useState(null); // { id, text, images }
   const [titleEditing, setTitleEditing] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
   const [atBottom, setAtBottom] = useState(true);
+  // Blank space held below the last turn so the question can sit at the top
+  // of the viewport while its answer arrives underneath. Recomputed as the
+  // answer grows, shrinking to nothing once it fills the screen on its own.
+  const [tailSpace, setTailSpace] = useState(0);
   const [images, setImages] = useState([]);
   const [preview, setPreview] = useState(null); // pending: { id, url (data URL) }
   const [imgError, setImgError] = useState(null);
+  // Text riding along with the turn: a pasted article, a dropped .md.
+  const [docs, setDocs] = useState([]);
+  // Depth counter, not a boolean: dragging over a child fires dragleave on
+  // the parent, and a boolean would flicker the highlight off mid-drag.
+  const dragDepth = useRef(0);
+  const [dragging, setDragging] = useState(false);
+  // Import progress and its result. Separate from imgError: "Imported 240
+  // chats" is good news, and shouldn't be painted in the danger colour.
+  const [notice, setNotice] = useState(null);
+
+  /* ---------- skills -----------------------------------------------------
+   *
+   * A skill is a named block of instructions kept in Settings; attaching
+   * one to a chat adds it to that chat's system turn, and it stays attached
+   * for the follow-ups. Skills marked always-on aren't listed as choices —
+   * they apply on their own and there is nothing to pick.
+   */
+  const [skills, setSkills] = useState([]);
+  const [skillIds, setSkillIds] = useState([]);
+  const [skillsOpen, setSkillsOpen] = useState(false);
+  const skillsRef = useRef(null);
+
+  useEffect(() => {
+    api
+      .listSkills()
+      .then((res) => setSkills(res.skills))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!skillsOpen) return;
+    const onDown = (e) => {
+      if (!skillsRef.current?.contains(e.target)) setSkillsOpen(false);
+    };
+    const onKey = (e) => e.key === "Escape" && setSkillsOpen(false);
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [skillsOpen]);
+
+  /* ---------- knowledge --------------------------------------------------
+   *
+   * The library is per account; whether a conversation draws on it is per
+   * conversation, and sticky once set. Off by default: most questions aren't
+   * about your documents, and retrieval that fires on every turn puts
+   * unrelated passages in front of the model for no reason.
+   */
+  const [knowledge, setKnowledge] = useState([]);
+  const [useKnowledge, setUseKnowledge] = useState(false);
+
+  useEffect(() => {
+    api
+      .listKnowledge()
+      .then((res) => setKnowledge(res.documents))
+      .catch(() => {});
+  }, []);
+
+  const optional = skills.filter((s) => !s.always);
+  const toggleSkill = (id) =>
+    setSkillIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
   const fileRef = useRef(null);
 
   const abortRef = useRef(null);
@@ -119,6 +259,15 @@ export default function AienticChatShell({
   // would fire once more with the stale value and yank the view back to the
   // bottom — which is what made scrolling up mid-answer impossible.
   const followRef = useRef(true);
+  // True from a send until the reader scrolls away: the view holds the
+  // question at the top instead of chasing the answer's tail.
+  const pinnedRef = useRef(false);
+  // The last turn attempted, for the Retry on a failure notice.
+  const lastRunRef = useRef(null);
+  // Set when a failure discards the conversation it was in: the loader
+  // effect below clears the error on every conversation change, and this
+  // one is the change — the message has to outlive it.
+  const keepErrorRef = useRef(false);
   const taRef = useRef(null);
   const idRef = useRef(conversationId);
   // The conversation this component is already streaming itself. Creating a
@@ -145,6 +294,8 @@ export default function AienticChatShell({
   const [composerH, setComposerH] = useState(96);
 
   const messages = conversation?.messages ?? [];
+  // The turn the view pins to: the most recent question asked.
+  const lastUserIndex = messages.map((m) => m.role).lastIndexOf("user");
   // Blank out only when there is genuinely nothing to show yet: a deep link
   // or refresh whose conversation hasn't arrived, or a fresh /new load whose
   // model list is still in flight (otherwise the composer would flash "No
@@ -152,8 +303,8 @@ export default function AienticChatShell({
   // keeps the current one on screen until the next one lands — a blank
   // frame on every click just reads as lag.
   const isLoadingConversation =
-    (!!conversationId && conversation === null) ||
-    (!conversationId && !modelsLoaded);
+    (!privateMode && !!conversationId && conversation === null) ||
+    (!privateMode && !conversationId && !modelsLoaded);
   const activeModel = useMemo(
     () => models.find((m) => m.id === modelId) || models[0] || null,
     [models, modelId],
@@ -172,8 +323,20 @@ export default function AienticChatShell({
 
   useEffect(() => {
     idRef.current = conversationId;
-    setError(null);
+    if (keepErrorRef.current) keepErrorRef.current = false;
+    else setError(null);
     setEditing(null);
+
+    if (privateMode) {
+      // Nothing to fetch, and nothing to write: the transcript lives here
+      // in component state until this view goes away.
+      setConversation((prev) =>
+        prev?.id === PRIVATE_ID
+          ? prev
+          : { id: PRIVATE_ID, title: "Private chat", messages: [] }
+      );
+      return;
+    }
 
     if (!conversationId) {
       setConversation(null);
@@ -194,6 +357,8 @@ export default function AienticChatShell({
       .then(({ conversation, generating }) => {
         if (cancelled) return;
         setConversation(conversation);
+        setSkillIds(conversation.skillIds || []);
+        setUseKnowledge(!!conversation.useKnowledge);
         if (conversation.endpointId) onModelChange(conversation.endpointId);
 
         // The answer is still being written on the server — a refresh mid-run
@@ -244,13 +409,32 @@ export default function AienticChatShell({
     };
     // onModelChange is stable; re-running on it would clobber a manual switch.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conversationId]);
+  }, [conversationId, privateMode]);
 
   const scrollToBottom = useCallback((behavior = "smooth") => {
     const el = scrollRef.current;
     if (!el) return;
     followRef.current = true;
+    pinnedRef.current = false; // asking for the bottom means you want the bottom
     el.scrollTo({ top: el.scrollHeight, behavior });
+  }, []);
+
+  /**
+   * Put the question you just asked at the top of the viewport, and leave
+   * it there: while pinned, nothing auto-scrolls. The answer grows into the
+   * space below and, once it outgrows the screen, keeps going past the
+   * bottom edge — reading on is a scroll you make yourself.
+   */
+  const pinAnchorToTop = useCallback((behavior = "auto") => {
+    const el = scrollRef.current;
+    const anchor = anchorRef.current;
+    if (!el || !anchor) return;
+    const delta =
+      anchor.getBoundingClientRect().top -
+      el.getBoundingClientRect().top -
+      TOP_GAP;
+    if (Math.abs(delta) < 1) return;
+    el.scrollTo({ top: el.scrollTop + delta, behavior });
   }, []);
 
   // Distance from the end that still counts as "there". The button uses the
@@ -281,6 +465,10 @@ export default function AienticChatShell({
   // `followRef` away from it, so the auto-scroll-to-bottom effect fought
   // every scroll attempt back to the bottom on the very next streamed token
   // — scrolling away during generation was effectively impossible.
+  const contentRef = useRef(null);
+  // The last question on screen — what the view is pinned to after a send.
+  const anchorRef = useRef(null);
+
   const scrollCleanupRef = useRef(null);
   const setScrollRef = useCallback((el) => {
     scrollRef.current = el;
@@ -290,6 +478,7 @@ export default function AienticChatShell({
 
     const breakAway = () => {
       followRef.current = false;
+      pinnedRef.current = false;
     };
 
     const onWheel = (e) => e.deltaY < 0 && breakAway();
@@ -339,17 +528,103 @@ export default function AienticChatShell({
   useEffect(() => {
     const firstSettle = settledConvoRef.current !== conversation?.id;
     settledConvoRef.current = conversation?.id ?? null;
-    scrollToBottom(firstSettle ? "auto" : "smooth");
-  }, [messages.length, conversation?.id, scrollToBottom]);
+    if (firstSettle) {
+      // Opening a conversation lands at its end, instantly — animating that
+      // made every refresh visibly scroll top-to-bottom.
+      pinnedRef.current = false;
+      scrollToBottom("auto");
+      return;
+    }
+    // A turn added to a conversation already on screen: pin its question.
+    followRef.current = true;
+    pinnedRef.current = true;
+    pinAnchorToTop("smooth");
+  }, [messages.length, conversation?.id, scrollToBottom, pinAnchorToTop]);
+
+  /**
+   * Opened from a search result: put the line that matched in the middle of
+   * the screen instead of dropping in at the end of the chat. The flash is
+   * what makes it findable — in a wall of text, "it's on screen somewhere"
+   * isn't an answer.
+   */
+  const [flash, setFlash] = useState(null);
+  useEffect(() => {
+    const target = highlightMessage;
+    if (!target || conversation?.id !== target.conversationId) return;
+    if (!messages.some((m) => m.id === target.messageId)) return;
+
+    const node = document.querySelector(
+      `[data-message-id="${CSS.escape(target.messageId)}"]`
+    );
+    if (!node) return;
+    // Breaking the follow first: this is a deliberate move away from the
+    // bottom, and the settle effect would otherwise drag it straight back.
+    followRef.current = false;
+    pinnedRef.current = false;
+    node.scrollIntoView({ block: "center", behavior: "auto" });
+    setFlash(target.messageId);
+    const timer = setTimeout(() => setFlash(null), 1600);
+    return () => clearTimeout(timer);
+  }, [highlightMessage, conversation?.id, messages]);
+
+  // A rename from the sidebar, applied to the copy this component holds.
+  useEffect(() => {
+    if (!renamed) return;
+    setConversation((prev) =>
+      prev && prev.id === renamed.id ? { ...prev, title: renamed.title } : prev
+    );
+  }, [renamed]);
 
   const tail = messages[messages.length - 1];
   useEffect(() => {
     if (!streaming || !followRef.current) return;
+    // Pinned: the question stays where it is and the answer fills in under
+    // it. Only a re-align, in case something above it changed height.
+    if (pinnedRef.current) return pinAnchorToTop("auto");
     const el = scrollRef.current;
     // Assigning scrollTop, not scrollTo({behavior:"auto"}): a smooth scroll
     // still in flight from the button would otherwise keep overriding this.
     if (el) el.scrollTop = el.scrollHeight;
-  }, [tail?.content, tail?.reasoning, streaming]);
+  }, [tail?.content, tail?.reasoning, streaming, pinAnchorToTop]);
+
+  /**
+   * Push the question you just asked to the top of the screen.
+   *
+   * The trick is entirely in the spacer: reserve enough empty height below
+   * the last turn that "scrolled to the bottom" and "that question at the
+   * top" are the same position. Everything else — the send, the streaming
+   * follow, the scroll-to-bottom button — keeps aiming at the bottom and
+   * gets this for free. As the answer grows the reserve shrinks, so a long
+   * reply scrolls the question up and off exactly as it always did.
+   */
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    const content = contentRef.current;
+    const anchor = anchorRef.current;
+    if (!el || !content || !anchor) {
+      setTailSpace(0);
+      return;
+    }
+    // Measured off the live boxes, with the two things we control ourselves
+    // (the padding under the list, and the spacer already in place) taken
+    // back out — otherwise each pass would measure its own last answer.
+    const reserved = cardClearance + 14 + tailSpace;
+    const tailHeight =
+      content.getBoundingClientRect().bottom -
+      reserved -
+      anchor.getBoundingClientRect().top;
+    const room = el.clientHeight - (cardClearance + 14) - tailHeight - TOP_GAP;
+    const next = Math.max(0, Math.round(room));
+    if (Math.abs(next - tailSpace) > 1) setTailSpace(next);
+  });
+
+  // Applying the spacer moves the bottom; if the view was following it,
+  // follow it to the new one.
+  useEffect(() => {
+    if (pinnedRef.current) return pinAnchorToTop("auto");
+    const el = scrollRef.current;
+    if (el && followRef.current) el.scrollTo({ top: el.scrollHeight });
+  }, [tailSpace, pinAnchorToTop]);
 
   // The composer floats over the messages; composerH positions the
   // scroll-to-bottom button above it. A callback ref, not useRef + a []
@@ -427,6 +702,21 @@ export default function AienticChatShell({
 
   /* ---------- streaming -------------------------------------------------- */
 
+  const stopAndUnqueue = () => {
+    // Whatever was waiting goes back into the composer. Draining it the
+    // instant you press Stop would be the opposite of what Stop means, and
+    // silently dropping it would lose what you typed.
+    setQueue((prev) => {
+      if (!prev.length) return prev;
+      setInput((current) =>
+        [...prev.map((q) => q.text).filter(Boolean), current].filter(Boolean).join("\n\n")
+      );
+      setImages((current) => [...prev.flatMap((q) => q.attached), ...current].slice(0, 4));
+      setDocs((current) => [...prev.flatMap((q) => q.documents), ...current].slice(0, 5));
+      return [];
+    });
+  };
+
   const stop = useCallback(() => {
     if (conversation) api.stopStream(conversation.id).catch(() => {});
   }, [conversation]);
@@ -488,6 +778,7 @@ export default function AienticChatShell({
 
   const run = useCallback(
     async (convoId, payload) => {
+      lastRunRef.current = { convoId, payload };
       ownStreamRef.current = convoId;
       setStreaming(true);
       setError(null);
@@ -515,11 +806,17 @@ export default function AienticChatShell({
       );
 
       try {
-        await api.streamTurn(
-          convoId,
-          { ...payload, signal: controller.signal },
-          streamHandlers(convoId),
-        );
+        if (payload.private)
+          await api.streamPrivateTurn(
+            { ...payload, signal: controller.signal },
+            streamHandlers(convoId),
+          );
+        else
+          await api.streamTurn(
+            convoId,
+            { ...payload, signal: controller.signal },
+            streamHandlers(convoId),
+          );
       } catch (err) {
         if (err.name !== "AbortError") {
           setError(err.message);
@@ -531,6 +828,28 @@ export default function AienticChatShell({
                 }
               : prev,
           );
+          // The chat was created for this turn and the request never
+          // landed — but "never landed" isn't always true (a stream can die
+          // after the server has stored the question), so ask before
+          // throwing anything away. An empty row in the sidebar is litter
+          // from a failure; one holding a question is the question.
+          if (payload.discardIfEmpty && !payload.private) {
+            const empty = await api
+              .getConversation(convoId)
+              .then((res) => res.conversation.messages.length === 0)
+              .catch(() => false);
+            if (empty) {
+              keepErrorRef.current = true;
+              onConversationDeleted?.(convoId);
+              setConversation(null);
+              lastRunRef.current = null;
+              // Nothing was kept, so give the turn back to the composer
+              // rather than leaving the reader to retype it.
+              setInput(payload.restore?.text || "");
+              setImages(payload.restore?.attached || []);
+              setDocs(payload.restore?.documents || []);
+            }
+          }
         }
       } finally {
         if (ownStreamRef.current === convoId) ownStreamRef.current = null;
@@ -539,7 +858,7 @@ export default function AienticChatShell({
         onConversationsChanged();
       }
     },
-    [onConversationsChanged, streamHandlers],
+    [onConversationDeleted, onConversationsChanged, streamHandlers],
   );
 
   /* ---------- attachments ------------------------------------------------ */
@@ -576,23 +895,182 @@ export default function AienticChatShell({
     setImgError(problem);
   };
 
+  /**
+   * Files arriving by paste or drop, which can be either kind: photos for
+   * the model, or a Claude data export to turn into history. The export is
+   * the only non-image we accept, and it's recognised the same way the
+   * server does — a .zip or a .json.
+   */
+  const acceptFiles = async (list) => {
+    const files = [...list];
+    if (!files.length) return;
+    setNotice(null);
+
+    // A .zip is always an export; a .json only counts as one if it parses
+    // as a chat list, which the server decides — so a dropped .json goes to
+    // the importer, and everything else that reads as text becomes an
+    // attachment for this turn.
+    const isExport = (f) =>
+      /\.(zip|json)$/i.test(f.name) || f.type === "application/zip";
+    const exports_ = onImportChats ? files.filter(isExport) : [];
+    const rest = files.filter((f) => !exports_.includes(f));
+    const texts = rest.filter(isTextFile);
+    const pictures = rest.filter((f) => !texts.includes(f));
+
+    if (texts.length) await addDocs(texts);
+    if (pictures.length) {
+      if (activeModel?.vision) await addFiles(pictures);
+      else setImgError(`${activeModel?.label || "This model"} can't look at images.`);
+    }
+
+    for (const file of exports_) {
+      setNotice(`Importing ${file.name}…`);
+      try {
+        const result = await onImportChats(file);
+        setNotice(
+          `Imported ${result.imported} chat${result.imported === 1 ? "" : "s"} from ${file.name}.`
+        );
+      } catch (err) {
+        setNotice(null);
+        setImgError(err.message);
+      }
+    }
+  };
+
+  /** Read dropped/picked text files in as attachments. */
+  const addDocs = async (files) => {
+    const next = [];
+    let problem = null;
+    for (const file of files) {
+      if (docs.length + next.length >= MAX_DOCS) {
+        problem = `You can attach up to ${MAX_DOCS} documents.`;
+        break;
+      }
+      if (file.size > MAX_DOC_BYTES) {
+        problem = `${file.name} is larger than 400 KB.`;
+        continue;
+      }
+      const text = await file.text();
+      if (!text.trim()) continue;
+      next.push({ id: `${file.name}-${file.size}-${file.lastModified}`, name: file.name, text });
+    }
+    if (next.length) setDocs((prev) => [...prev, ...next]);
+    if (problem) setImgError(problem);
+  };
+
+  const removeDoc = (id) => setDocs((prev) => prev.filter((d) => d.id !== id));
+
+  /**
+   * Fetch a pasted link and attach what it says.
+   *
+   * The chip appears immediately, reading, and fills in with the page's own
+   * title and length — or with what went wrong, which stays on screen as a
+   * chip you dismiss rather than an error that replaces your turn.
+   */
+  const readLink = async (url) => {
+    const id = `url-${Date.now()}`;
+    const host = (() => {
+      try {
+        return new URL(url).hostname.replace(/^www\./, "");
+      } catch {
+        return url;
+      }
+    })();
+
+    setDocs((prev) => [...prev, { id, name: host, url, text: "", reading: true }]);
+    try {
+      const { page } = await api.readUrl(url);
+      setDocs((prev) =>
+        prev.map((d) =>
+          d.id === id
+            ? { id, name: page.title, url: page.url, text: page.text, truncated: page.truncated }
+            : d
+        )
+      );
+    } catch (err) {
+      setDocs((prev) =>
+        prev.map((d) => (d.id === id ? { ...d, reading: false, failed: err.message } : d))
+      );
+    }
+  };
+
+  const onPaste = (e) => {
+    const files = [...(e.clipboardData?.files || [])];
+    if (files.length) {
+      e.preventDefault();
+      acceptFiles(files);
+      return;
+    }
+
+    const text = (e.clipboardData?.getData("text/plain") || "").trim();
+
+    // A link on its own gets read: the server fetches the page and the
+    // article arrives as an attachment, so "what does this say?" works on
+    // something the model can actually see.
+    if (BARE_URL.test(text) && docs.length < MAX_DOCS) {
+      e.preventDefault();
+      readLink(text);
+      return;
+    }
+
+    // A paste long enough to be a document becomes one, so the composer
+    // stays a place you can see what you're asking.
+    if (text.length < PASTE_AS_DOC_CHARS || docs.length >= MAX_DOCS) return;
+    e.preventDefault();
+    setDocs((prev) => [
+      ...prev,
+      { id: `paste-${Date.now()}`, name: titleForPaste(text), text, pasted: true },
+    ]);
+  };
+
+  const onDrop = (e) => {
+    e.preventDefault();
+    dragDepth.current = 0;
+    setDragging(false);
+    acceptFiles(e.dataTransfer?.files || []);
+  };
+
+  const dragProps = {
+    onDragEnter: (e) => {
+      if (![...(e.dataTransfer?.types || [])].includes("Files")) return;
+      dragDepth.current += 1;
+      setDragging(true);
+    },
+    onDragOver: (e) => {
+      if ([...(e.dataTransfer?.types || [])].includes("Files")) e.preventDefault();
+    },
+    onDragLeave: () => {
+      dragDepth.current = Math.max(0, dragDepth.current - 1);
+      if (!dragDepth.current) setDragging(false);
+    },
+    onDrop,
+  };
+
   const removeImage = (id) =>
     setImages((prev) => prev.filter((img) => img.id !== id));
 
-  const send = useCallback(async () => {
-    const text = input.trim();
-    const attached = images;
-    // Text, photos, or both — but not an empty turn.
-    if ((!text && !attached.length) || streaming || !activeModel || sendingRef.current) return;
+  /**
+   * Send one turn: the composer's, or one that was queued while an answer
+   * was still arriving. Everything about a turn travels in the argument, so
+   * a queued one goes out through the same path as a typed one rather than
+   * through a second, subtly different one.
+   */
+  const deliver = useCallback(async ({ text, attached, documents }) => {
+    if (
+      (!text && !attached.length && !documents.length) ||
+      streaming ||
+      !activeModel ||
+      sendingRef.current
+    )
+      return;
     sendingRef.current = true;
     try {
-      setInput("");
-      setImages([]);
       let convoId = conversation?.id;
+      const hadConversation = !!convoId;
 
       // The conversation is created on the first message, so empty shells
-      // never pile up in the sidebar.
-      if (!convoId) {
+      // never pile up in the sidebar. A private chat has none to create.
+      if (!convoId && !privateMode) {
         try {
           const { conversation: created } = await api.createConversation(
             activeModel.id,
@@ -608,6 +1086,7 @@ export default function AienticChatShell({
           setError(err.message);
           setInput(text);
           setImages(attached);
+          setDocs(documents);
           return;
         }
       }
@@ -619,35 +1098,104 @@ export default function AienticChatShell({
       // authoritative title instead (see streamHandlers), which arrives
       // moments after this and can't be wrong, so there's nothing left to
       // compute here.
+      // Same shape the server persists (data-URL strings for photos, name +
+      // text for documents), so the bubble renders identically before the
+      // refresh round-trip — and so the private path can send it as history.
+      const turn = {
+        id: "local",
+        role: "user",
+        content: text,
+        images: attached.map((img) => img.url),
+        // Only what was actually read: a link still loading, or one that
+        // couldn't be fetched, is not something to hand the model.
+        attachments: documents
+          .filter((d) => d.text && !d.failed)
+          .map((d) => ({ name: d.name, text: d.text, ...(d.url ? { url: d.url } : {}) })),
+        createdAt: Date.now(),
+      };
+
       setConversation((prev) =>
-        prev
-          ? {
-              ...prev,
-              messages: [
-                ...prev.messages,
-                {
-                  id: "local",
-                  role: "user",
-                  content: text,
-                  // Same shape the server persists (data-URL strings), so the
-                  // bubble renders identically before the refresh round-trip.
-                  images: attached.map((img) => img.url),
-                  createdAt: Date.now(),
-                },
-              ],
-            }
-          : prev,
+        prev ? { ...prev, messages: [...prev.messages, turn] } : prev,
       );
 
+      const fresh = !hadConversation;
       await run(convoId, {
         content: text,
         endpointId: activeModel.id,
-        images: attached.map((img) => img.url),
+        images: turn.images,
+        attachments: turn.attachments,
+        skillIds,
+        useKnowledge,
+        // A first turn that never produced a message leaves an empty chat
+        // in the sidebar; run() clears it up rather than stranding it, and
+        // hands the text and photos back to the composer. Neither field is
+        // sent to the server — streamTurn builds its body from named fields.
+        discardIfEmpty: fresh,
+        restore: { text, attached, documents },
+        // A private turn carries the whole exchange with it: the server
+        // has nothing stored to append to.
+        ...(privateMode
+          ? { private: true, messages: [...(conversation?.messages || []), turn] }
+          : {}),
       });
     } finally {
       sendingRef.current = false;
     }
-  }, [activeModel, conversation, images, input, onConversationCreated, run, streaming]);
+  }, [
+    activeModel,
+    conversation,
+    onConversationCreated,
+    privateMode,
+    run,
+    skillIds,
+    streaming,
+    useKnowledge,
+  ]);
+
+  /* ---------- the queue --------------------------------------------------
+   *
+   * A question that occurs to you while the model is still answering the
+   * last one shouldn't have to wait in your head. Enter queues it, the
+   * queue drains itself when the answer lands, and the composer is free
+   * again immediately.
+   */
+  const [queue, setQueue] = useState([]);
+
+  const compose = () => ({
+    text: input.trim(),
+    attached: images,
+    documents: docs.filter((d) => d.text && !d.failed),
+  });
+
+  const clearComposer = () => {
+    setInput("");
+    setImages([]);
+    setDocs([]);
+  };
+
+  const send = useCallback(() => {
+    const turn = compose();
+    if (!turn.text && !turn.attached.length && !turn.documents.length) return;
+
+    if (streaming) {
+      setQueue((prev) => [...prev, { ...turn, id: `q-${Date.now()}` }]);
+      clearComposer();
+      return;
+    }
+    clearComposer();
+    deliver(turn);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deliver, docs, images, input, streaming]);
+
+  // Drain: one turn per run, and only when a run has genuinely finished.
+  useEffect(() => {
+    if (streaming || !queue.length || sendingRef.current) return;
+    const [next, ...rest] = queue;
+    setQueue(rest);
+    deliver(next);
+  }, [streaming, queue, deliver]);
+
+  const unqueue = (id) => setQueue((prev) => prev.filter((q) => q.id !== id));
 
   const regenerate = useCallback(async () => {
     if (!conversation || streaming || !activeModel || sendingRef.current) return;
@@ -660,19 +1208,62 @@ export default function AienticChatShell({
             !(m.role === "assistant" && i === prev.messages.length - 1),
         ),
       }));
+      const trimmed = conversation.messages.filter(
+        (m, i) => !(m.role === "assistant" && i === conversation.messages.length - 1),
+      );
       await run(conversation.id, {
         regenerate: true,
         endpointId: activeModel.id,
+        ...(privateMode
+          ? { private: true, messages: trimmed, skillIds, useKnowledge }
+          : {}),
       });
     } finally {
       sendingRef.current = false;
     }
-  }, [activeModel, conversation, run, streaming]);
+  }, [activeModel, conversation, privateMode, run, skillIds, streaming]);
+
+  /**
+   * Try the failed turn again.
+   *
+   * Which "again" depends on where it broke. If the question made it into
+   * the conversation before the model server fell over — the common case,
+   * since the turn is stored before the upstream is called — re-sending the
+   * text would ask it twice, so this regenerates instead. If nothing was
+   * stored (the request never landed, or the conversation itself couldn't
+   * be created) it replays the original payload.
+   */
+  const retry = useCallback(async () => {
+    setError(null);
+    const tail = messages[messages.length - 1];
+    if (tail?.role === "user") return regenerate();
+
+    const last = lastRunRef.current;
+    if (last) await run(last.convoId, last.payload);
+  }, [messages, regenerate, run]);
 
   /* ---------- message actions -------------------------------------------- */
 
   const removeMessage = async (messageId) => {
     if (!conversation) return;
+
+    // Private chats have no server copy to delete from — the transcript on
+    // screen is the only one there is.
+    if (privateMode) {
+      setConversation((prev) => {
+        if (!prev) return prev;
+        const at = prev.messages.findIndex((m) => m.id === messageId);
+        if (at === -1) return prev;
+        let end = at + 1;
+        if (prev.messages[at].role === "user")
+          while (prev.messages[end]?.role === "assistant") end++;
+        const messages = [...prev.messages];
+        messages.splice(at, end - at);
+        return { ...prev, messages };
+      });
+      return;
+    }
+
     try {
       const { conversation: next } = await api.deleteMessage(
         conversation.id,
@@ -696,12 +1287,35 @@ export default function AienticChatShell({
   const submitEdit = async () => {
     if (!conversation || !editing) return;
     const text = editing.text.trim();
-    if (!text) return;
+    const images = editing.images || [];
+    // Same rule as a new turn: dropping every photo *and* the text would
+    // leave nothing to re-answer.
+    if (!text && !images.length) return;
+
+    if (privateMode) {
+      // Same edit, applied where the transcript actually lives.
+      const at = conversation.messages.findIndex((m) => m.id === editing.id);
+      const messages = conversation.messages.slice(0, at + 1);
+      messages[at] = { ...messages[at], content: text, images };
+      const next = { ...conversation, messages };
+      setConversation(next);
+      setEditing(null);
+      await run(conversation.id, {
+        regenerate: true,
+        endpointId: activeModel.id,
+        private: true,
+        messages,
+        skillIds,
+        useKnowledge,
+      });
+      return;
+    }
 
     const { conversation: next } = await api.editMessage(
       conversation.id,
       editing.id,
       text,
+      images,
     );
     setConversation(next);
     setEditing(null);
@@ -785,7 +1399,16 @@ export default function AienticChatShell({
             <IconPanel className="h-[18px] w-[18px] shrink-0" />
           </button>
         )}
-        {titleEditing ? (
+        {privateMode ? (
+          <span className="flex min-w-0 flex-1 items-center gap-2 text-[length:var(--fs-base2)]
+                           text-[var(--text-soft)]">
+            <IconGhost className="h-[17px] w-[17px] shrink-0" />
+            Private chat
+            <span className="truncate text-[length:var(--fs-xs)] text-[var(--muted)]">
+              — not saved anywhere
+            </span>
+          </span>
+        ) : titleEditing ? (
           <input
             autoFocus
             value={titleDraft}
@@ -816,9 +1439,82 @@ export default function AienticChatShell({
             {conversation?.title || "New chat"}
           </span>
         )}
+
+        {/* The right of the bar was empty. It now says what is answering in
+            this conversation and whether that model is loaded — the two
+            facts you'd otherwise open the picker to check. */}
+        {conversation && activeModel && (
+          <span className="ml-auto flex shrink-0 items-center gap-2 pr-1 max-md:hidden">
+            {modelStatus[activeModel.id] === "loaded" && (
+              <span
+                title="Loaded in memory"
+                className="h-[6px] w-[6px] rounded-full bg-[var(--ok)]"
+              />
+            )}
+            <span className="ui-label">{activeModel.label}</span>
+          </span>
+        )}
+        {/* Private chat: a state this conversation can be in, so it belongs
+            with the conversation rather than in the sidebar's list of
+            destinations. No filled background — it's a mode toggle, not a
+            button that does something on press. */}
+        {onTogglePrivate && (
+          <button
+            onClick={onTogglePrivate}
+            aria-label="Private chat"
+            aria-pressed={privateMode}
+            title={
+              privateMode
+                ? "Leave the private chat"
+                : "Start a private chat — nothing is written down"
+            }
+            className={`shrink-0 rounded-md p-1.5 transition-colors
+                        ${conversation && activeModel ? "" : "ml-auto"}
+                        ${privateMode
+                          ? "text-[var(--accent)]"
+                          : "text-[var(--muted)] hover:text-[var(--text)]"}`}
+          >
+            <IconGhost className="h-[19px] w-[19px]" />
+          </button>
+        )}
       </header>
 
       <div className="relative min-h-0 flex-1">
+        {/* Errors sit under the title bar at the top right, not in the
+            transcript: a failure isn't part of the conversation, and one
+            buried at the end of the messages scrolls away the moment the
+            next answer arrives. Dismissible, and replaced rather than
+            stacked — only the most recent failure is worth reading. */}
+        {error && (
+          <div
+            role="alert"
+            className="absolute right-4 top-3 z-20 flex max-w-sm animate-scale-in items-start gap-2
+                       rounded-lg border border-[var(--danger-border)] bg-[var(--danger-bg)]
+                       px-3 py-2.5 text-[13px] text-[var(--danger)]
+                       shadow-[var(--shadow-pop)] max-md:left-4 max-md:max-w-none"
+          >
+            <span className="min-w-0 flex-1">
+              {error}
+              {(messages.length > 0 || lastRunRef.current) && !streaming && (
+                <button
+                  onClick={retry}
+                  className="ml-2 whitespace-nowrap font-medium underline underline-offset-2
+                             hover:opacity-80"
+                >
+                  Retry
+                </button>
+              )}
+            </span>
+            <button
+              onClick={() => setError(null)}
+              title="Dismiss"
+              className="shrink-0 rounded p-0.5 opacity-70 hover:opacity-100"
+            >
+              <IconX className="h-[14px] w-[14px]" />
+            </button>
+          </div>
+        )}
+
         <div
           ref={setScrollRef}
           onScroll={onScroll}
@@ -845,29 +1541,42 @@ export default function AienticChatShell({
             // +14, not +8: the card's own box-shadow bleeds a couple of
             // pixels past its border, and 8px wasn't quite enough clearance
             // to keep that off the last line too.
+            ref={contentRef}
             style={{ paddingBottom: cardClearance + 14 }}
             className="mx-auto flex min-h-full max-w-3xl flex-col px-6 pt-10 max-md:px-4 select-none-touch"
           >
             {messages.length === 0 && (
               // m-auto centres it in the column once the column is at least as
               // tall as the scroller.
+              // m-auto centres it in the column once the column is at least as
+              // tall as the scroller.
               <div className="m-auto text-center">
-                <p className="animate-fade-up text-[length:var(--fs-lg)] text-[var(--text-soft)]">
-                  What are we testing today?
+                <p className="display animate-fade-up text-[length:var(--fs-lg)]
+                              leading-tight text-[var(--text)]">
+                  {privateMode ? "You're in a private chat" : "What are we testing today?"}
                 </p>
-                <p className="mt-2 animate-fade-up text-[length:var(--fs-sm2)] text-[var(--faint)]
+                <p className="mt-3 animate-fade-up text-[length:var(--fs-sm2)] text-[var(--muted)]
                             [animation-delay:90ms]">
-                  {activeModel
-                    ? `${activeModel.label}${activeModel.note ? ` · ${activeModel.note}` : ""}`
-                    : "No models configured yet."}
+                  {privateMode
+                    ? "Nothing here is written to the server. Closing this view is the delete."
+                    : activeModel
+                      ? `${activeModel.label}${activeModel.note ? ` · ${activeModel.note}` : ""}`
+                      : "No models configured yet."}
                 </p>
               </div>
             )}
 
             {messages.map((m, i) => {
               const isLast = i === messages.length - 1;
+              // The model that answered the turn before this one, so a
+              // repeated attribution can be left off.
+              const previousModel = messages
+                .slice(0, i)
+                .filter((x) => x.role === "assistant")
+                .pop()?.model;
 
               if (m.role === "user") {
+                const isAnchor = i === lastUserIndex;
                 const isEditing = editing?.id === m.id;
                 return (
                   // Index key, not the message id: the assistant bubble is
@@ -875,9 +1584,47 @@ export default function AienticChatShell({
                   // patched to the server's real id. Keying by id would remount
                   // it at that moment and replay the fade mid-generation; the
                   // index is stable across that swap, so it settles in once.
-                  <div key={i} className="mb-8 flex animate-fade-up flex-col items-end">
+                  <div
+                    key={i}
+                    ref={isAnchor ? anchorRef : null}
+                    data-message-id={m.id}
+                    className={`mb-8 flex animate-fade-up flex-col items-end rounded-xl
+                                transition-colors duration-500
+                                ${flash === m.id ? "bg-[var(--hover)]" : ""}`}
+                  >
                     {isEditing ? (
                       <div className="w-full max-w-[85%]">
+                        {/* The photos on the turn, editable the only way
+                            that makes sense here: click to see one full
+                            size, X to drop it before re-asking. */}
+                        {editing.images.length > 0 && (
+                          <div className="mb-2 flex flex-wrap justify-end gap-2">
+                            {editing.images.map((url, j) => (
+                              <div key={`${m.id}-edit-${j}`} className="relative animate-scale-in">
+                                <PreviewableImage
+                                  src={url}
+                                  alt={`Attached image ${j + 1}`}
+                                  className="h-16 w-16 rounded-lg object-cover"
+                                />
+                                <button
+                                  onMouseDown={(e) => e.preventDefault()}
+                                  onClick={() =>
+                                    setEditing((prev) => ({
+                                      ...prev,
+                                      images: prev.images.filter((u) => u !== url),
+                                    }))
+                                  }
+                                  title="Remove image"
+                                  className="absolute -right-1.5 -top-1.5 rounded-full
+                                             border border-[var(--border)] bg-[var(--raised)] p-[3px]
+                                             text-[var(--muted)] hover:text-[var(--text)]"
+                                >
+                                  <IconX className="h-3 w-3" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                         <textarea
                           value={editing.text}
                           autoFocus
@@ -907,7 +1654,9 @@ export default function AienticChatShell({
                           <button
                             onMouseDown={(e) => e.preventDefault()}
                             onClick={submitEdit}
-                            className="rounded-lg bg-[var(--text)] px-3 py-1.5 text-[var(--bg)]"
+                            disabled={!editing.text.trim() && !editing.images.length}
+                            className="rounded-lg bg-[var(--accent)] px-3 py-1.5 text-[var(--accent-fg)]
+                                       disabled:opacity-40"
                           >
                             Save
                           </button>
@@ -917,8 +1666,35 @@ export default function AienticChatShell({
                       <>
                         <div
                           className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md
-                                      bg-[var(--hover)] px-4 py-2.5 text-[length:var(--fs-md)] leading-[1.65]"
+                                      bg-[var(--hover)] px-4 py-2.5 font-sans
+                                      text-[length:var(--fs-md)] leading-[1.65]"
                         >
+                          {m.attachments?.length > 0 && (
+                            <span className="mb-1.5 flex flex-col gap-1">
+                              {m.attachments.map((doc, j) => (
+                                <a
+                                  key={`${m.id}-doc-${j}`}
+                                  href={doc.url || undefined}
+                                  target={doc.url ? "_blank" : undefined}
+                                  rel={doc.url ? "noreferrer" : undefined}
+                                  title={doc.url || doc.text?.slice(0, 400)}
+                                  className={`flex items-center gap-1.5 rounded-md bg-[var(--panel)]
+                                              px-2 py-1 text-[length:var(--fs-xs)] text-[var(--text-soft)]
+                                              ${doc.url ? "hover:bg-[var(--hover)]" : ""}`}
+                                >
+                                  {doc.url ? (
+                                    <IconLink className="h-[13px] w-[13px] shrink-0 text-[var(--muted)]" />
+                                  ) : (
+                                    <IconFileText className="h-[13px] w-[13px] shrink-0 text-[var(--muted)]" />
+                                  )}
+                                  <span className="min-w-0 flex-1 truncate">{doc.name}</span>
+                                  <span className="ui-label shrink-0">
+                                    {wordCount(doc.text || "").toLocaleString()} w
+                                  </span>
+                                </a>
+                              ))}
+                            </span>
+                          )}
                           {m.images?.length > 0 && (
                             <span className="mb-1.5 flex flex-wrap gap-1.5">
                               {m.images.map((url, j) => (
@@ -937,7 +1713,11 @@ export default function AienticChatShell({
                           timestamp={m.createdAt}
                           hidden={streaming}
                           onEdit={() =>
-                            setEditing({ id: m.id, text: m.content })
+                            setEditing({
+                              id: m.id,
+                              text: m.content,
+                              images: m.images || [],
+                            })
                           }
                           onCopy={() => copy(m.content)}
                           onDelete={() => removeMessage(m.id)}
@@ -950,9 +1730,54 @@ export default function AienticChatShell({
 
               return (
                 // See the index-key note on the user message above.
-                <div key={i} className="mb-10 animate-fade-up">
+                <div
+                  key={i}
+                  data-message-id={m.id}
+                  className={`mb-10 animate-fade-up rounded-xl transition-colors duration-500
+                              ${flash === m.id ? "bg-[var(--hover)]" : ""}`}
+                >
+                  {/* Who answered. The app lets you change model mid-chat,
+                      so a transcript with no attribution is a transcript you
+                      can't read back: two answers in the same thread can
+                      come from two different machines. Shown only where it's
+                      recorded, and only when it changes — a run of answers
+                      from one model is labelled once. */}
+                  {m.model && m.model !== previousModel && (
+                    <div className="ui-label mb-2">{m.model}</div>
+                  )}
                   <Reasoning text={m.reasoning} />
-                  <Markdown>{m.content}</Markdown>
+                  <div className="answer">
+                    <Markdown>{m.content}</Markdown>
+                  </div>
+
+                  {/* What the answer had in front of it. Shown after the
+                      answer, not before: it's for checking, and checking
+                      comes second. */}
+                  {m.sources?.length > 0 && (
+                    <div className="mt-3 flex flex-wrap items-center gap-1.5">
+                      <span className="ui-label">Sources</span>
+                      {m.sources.map((source) => {
+                        // An <a> without an href is a link that isn't one:
+                        // it looks clickable, does nothing, and reads as a
+                        // link to a screen reader. Only pages get anchors.
+                        const Tag = source.url ? "a" : "span";
+                        return (
+                          <Tag
+                            key={source.id}
+                            {...(source.url
+                              ? { href: source.url, target: "_blank", rel: "noreferrer" }
+                              : {})}
+                            className={`flex items-center gap-1 rounded-md bg-[var(--panel)] px-2 py-0.5
+                                        text-[length:var(--fs-xs)] text-[var(--text-soft)]
+                                        ${source.url ? "hover:bg-[var(--hover)]" : ""}`}
+                          >
+                            <IconLibrary className="h-[12px] w-[12px] text-[var(--muted)]" />
+                            {source.title}
+                          </Tag>
+                        );
+                      })}
+                    </div>
+                  )}
                   {/* A single blinking caret line says "still thinking";
                       the same caret trails the text once tokens land. */}
                   {streaming && isLast && (
@@ -960,7 +1785,7 @@ export default function AienticChatShell({
                       role="status"
                       aria-label="Thinking"
                       className="ml-0.5 inline-block h-[1.05em] w-[2px] translate-y-[3px]
-                                   animate-caret bg-[var(--muted)]"
+                                   animate-caret bg-[var(--accent)]"
                     />
                   )}
                   <MessageActions
@@ -974,14 +1799,10 @@ export default function AienticChatShell({
               );
             })}
 
-            {error && (
-              <div
-                className="mb-8 animate-fade-up rounded-lg border border-[var(--danger-border)] bg-[var(--danger-bg)]
-                            px-4 py-3 text-[14px] text-[var(--danger)]"
-              >
-                {error}
-              </div>
-            )}
+
+            {/* The reserve itself. aria-hidden and inert to everything: it is
+                empty layout, not content. */}
+            <div aria-hidden style={{ height: tailSpace }} />
           </div>
         </div>
 
@@ -993,7 +1814,7 @@ export default function AienticChatShell({
             style={{ bottom: composerH + 12 }}
             className="absolute left-1/2 z-10 -translate-x-1/2 animate-scale-in rounded-full border
                        border-[var(--border)] bg-[var(--raised)] p-2.5 text-[var(--muted)]
-                       shadow-[0_2px_10px_rgba(0,0,0,0.15)] transition-colors
+                       shadow-[var(--shadow-pop)] transition-colors
                        hover:text-[var(--text)]"
           >
             <IconArrowDown className="h-[18px] w-[18px]" />
@@ -1044,17 +1865,34 @@ export default function AienticChatShell({
           <div className="pointer-events-auto relative mx-auto max-w-3xl">
             <div
               ref={setCardRef}
-              className="rounded-2xl border border-[var(--border-strong)] bg-[var(--raised)] p-2.5
-                          shadow-[0_1px_3px_rgba(0,0,0,0.04)]
-                          focus-within:border-[var(--focus)]"
+              {...dragProps}
+              // Filled rather than outlined, and generously rounded: the
+              // composer reads as a surface you type on instead of a form
+              // field with a box around it. The border stays for the drag
+              // state, which does need an edge to light up.
+              className={`relative rounded-[26px] border bg-[var(--panel)] p-3
+                          ${dragging
+                            ? "border-[var(--focus)] border-dashed"
+                            : "border-transparent"}`}
             >
+              {dragging && (
+                <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center
+                                rounded-2xl bg-[var(--raised)]/90 text-[length:var(--fs-sm)] text-[var(--text-soft)]">
+                  Drop images, or a Claude export, here
+                </div>
+              )}
               <textarea
                 ref={taRef}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={onKeyDown}
+                onPaste={onPaste}
                 rows={1}
-                placeholder={`Message ${activeModel?.label ?? "…"}`}
+                placeholder={
+                  streaming
+                    ? "Queue for after this turn…"
+                    : `Message ${activeModel?.label ?? "…"}`
+                }
                 className="w-full resize-none bg-transparent px-2 py-1.5 text-[length:var(--fs-md)] leading-[1.6]
                          text-[var(--text)] placeholder:text-[var(--faint)] focus:outline-none"
               />
@@ -1091,8 +1929,157 @@ export default function AienticChatShell({
                 </p>
               )}
 
-              <div className="flex items-center justify-between pt-1">
-                <div className="flex min-w-0 items-center gap-1">
+              {notice && (
+                <p className="px-1 pt-1.5 text-[12px] text-[var(--muted)]">
+                  {notice}
+                </p>
+              )}
+
+              {/* Waiting their turn. Shown above everything else in the
+                  card because they're already sent as far as the reader is
+                  concerned — the composer below is the next thing after
+                  these. */}
+              {queue.map((item) => (
+                <div
+                  key={item.id}
+                  className="flex animate-scale-in items-center gap-2 px-1 pt-2"
+                >
+                  <span className="ui-label shrink-0">Queued</span>
+                  <span className="min-w-0 flex-1 truncate text-[length:var(--fs-sm2)] text-[var(--muted)]">
+                    {item.text ||
+                      `${item.documents.length + item.attached.length} attachment(s)`}
+                  </span>
+                  <button
+                    onClick={() => unqueue(item.id)}
+                    title="Remove from the queue"
+                    className="shrink-0 rounded p-0.5 text-[var(--muted)] hover:text-[var(--text)]"
+                  >
+                    <IconX className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ))}
+
+              {/* Documents attached to this turn. A pasted article shows
+                  what it is and how long it is — the two things you need to
+                  know before you send it somewhere. */}
+              {docs.length > 0 && (
+                <div className="flex flex-col gap-1.5 px-1 pt-2">
+                  {docs.map((doc) => (
+                    <div
+                      key={doc.id}
+                      className={`flex animate-scale-in items-center gap-2 rounded-lg border
+                                  bg-[var(--panel)] px-2.5 py-1.5
+                                  ${doc.failed
+                                    ? "border-[var(--danger-border)]"
+                                    : "border-[var(--border)]"}`}
+                    >
+                      {doc.url ? (
+                        <IconLink className="h-[15px] w-[15px] shrink-0 text-[var(--muted)]" />
+                      ) : (
+                        <IconFileText className="h-[15px] w-[15px] shrink-0 text-[var(--muted)]" />
+                      )}
+                      <span className="min-w-0 flex-1 truncate text-[length:var(--fs-sm2)]">
+                        {doc.name}
+                      </span>
+                      <span
+                        className={`ui-label shrink-0 ${doc.failed ? "text-[var(--danger)]" : ""}`}
+                      >
+                        {doc.reading
+                          ? "Reading…"
+                          : doc.failed
+                            ? doc.failed
+                            : `${doc.pasted ? "Pasted · " : ""}${wordCount(doc.text).toLocaleString()} words`}
+                      </span>
+                      <button
+                        onClick={() => removeDoc(doc.id)}
+                        title="Remove"
+                        className="shrink-0 rounded p-0.5 text-[var(--muted)] hover:text-[var(--text)]"
+                      >
+                        <IconX className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Skills riding along with this chat. Kept above the controls
+                  row so a long list wraps into the card rather than
+                  squeezing the model picker. */}
+              {skillIds.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1.5 px-1 pt-2">
+                  {skillIds.map((id) => {
+                    const skill = skills.find((s) => s.id === id);
+                    if (!skill) return null;
+                    return (
+                      <span
+                        key={id}
+                        className="flex animate-scale-in items-center gap-1 rounded-full border
+                                   border-[var(--border)] bg-[var(--hover)] py-0.5 pl-2 pr-1
+                                   text-[length:var(--fs-xs)] text-[var(--text-soft)]"
+                      >
+                        <IconSparkles className="h-3 w-3 shrink-0" />
+                        {skill.name}
+                        <button
+                          onClick={() => toggleSkill(id)}
+                          title={`Detach ${skill.name}`}
+                          className="rounded-full p-0.5 text-[var(--muted)] hover:text-[var(--text)]"
+                        >
+                          <IconX className="h-3 w-3" />
+                        </button>
+                      </span>
+                    );
+                  })}
+                </div>
+              )}
+
+              <div className="flex items-center justify-between pt-1.5">
+                <div className="flex min-w-0 items-center gap-1.5">
+                  {/* First in the row, before the model picker: attaching a
+                      file is what the hand reaches for, and the leading edge
+                      of the bar is where it goes.
+
+                      Shown only while a vision-capable model is active —
+                      attaching photos to a text-only model would just send
+                      bytes it can't see. h-7 w-7 = 28px, the same height as
+                      the picker's trigger (py-1 + its 20px text line), so the
+                      two line up as one control. Opens the native picker; the
+                      accept list is the first gate, addFiles re-checks every
+                      file. */}
+                  {/* Always here: every model can read a document, even the
+                      ones that can't look at a photo. The accept list is what
+                      narrows, and addFiles re-checks whatever arrives. */}
+                  <>
+                      <button
+                        onClick={() => fileRef.current?.click()}
+                        disabled={streaming}
+                        title={
+                          activeModel?.vision
+                            ? "Attach a document or photo"
+                            : "Attach a document"
+                        }
+                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md
+                                   text-[var(--muted)] transition-colors hover:bg-[var(--hover)]
+                                   disabled:opacity-50"
+                      >
+                        <IconPlus className="h-[18px] w-[18px]" />
+                      </button>
+                      <input
+                        ref={fileRef}
+                        type="file"
+                        accept={
+                          activeModel?.vision
+                            ? "image/jpeg,image/png,image/gif,.txt,.md,.markdown,.csv,.log,.rst"
+                            : ".txt,.md,.markdown,.csv,.log,.rst,text/plain"
+                        }
+                        multiple
+                        className="hidden"
+                        onChange={(e) => {
+                          acceptFiles([...e.target.files]);
+                          e.target.value = ""; // allow re-picking the same file
+                        }}
+                      />
+                  </>
+
                   <ModelPicker
                     models={models}
                     value={activeModel?.id}
@@ -1102,45 +2089,92 @@ export default function AienticChatShell({
                     status={modelStatus}
                     matchParent
                   />
-                  {/* Shown only while a vision-capable model is active —
-                      attaching photos to a text-only model would just send
-                      bytes it can't see. h-7 w-7 = 28px, the same height as
-                      the picker's trigger (py-1 + its 20px text line), so
-                      the pair reads as one control. Opens the native picker;
-                      the accept list is the first gate, addFiles re-checks
-                      every file. */}
-                  {activeModel?.vision && (
-                    <>
-                      <button
-                        onClick={() => fileRef.current?.click()}
-                        disabled={streaming}
-                        title="Attach photos (JPEG, PNG or GIF)"
-                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md
-                                   text-[var(--muted)] transition-colors hover:bg-[var(--panel)]
-                                   disabled:opacity-50"
-                      >
-                        <IconPlus className="h-[18px] w-[18px]" />
-                      </button>
-                      <input
-                        ref={fileRef}
-                        type="file"
-                        accept="image/jpeg,image/png,image/gif"
-                        multiple
-                        className="hidden"
-                        onChange={(e) => {
-                          addFiles([...e.target.files]);
-                          e.target.value = ""; // allow re-picking the same file
-                        }}
-                      />
-                    </>
+                  {/* Retrieval, on or off for this conversation. Hidden
+                      when the library is empty — a switch with nothing
+                      behind it is worse than no switch. */}
+                  {knowledge.length > 0 && (
+                    <button
+                      onClick={() => setUseKnowledge((on) => !on)}
+                      title={
+                        useKnowledge
+                          ? `Looking things up in your ${knowledge.length} document(s)`
+                          : "Look things up in your documents"
+                      }
+                      aria-pressed={useKnowledge}
+                      className={`flex h-7 items-center gap-1.5 rounded-lg px-2
+                                  text-[length:var(--fs-sm)] transition-colors
+                                  ${useKnowledge
+                                    ? "bg-[var(--accent-soft)] text-[var(--accent)]"
+                                    : "text-[var(--muted)] hover:bg-[var(--hover)]"}`}
+                    >
+                      <IconLibrary className="h-[17px] w-[17px]" />
+                    </button>
                   )}
+
+                  {/* Skills: the user's own named instruction blocks. Hidden
+                      entirely when none are defined — an empty menu is worse
+                      than no button. */}
+                  {optional.length > 0 && (
+                    <div ref={skillsRef} className="relative">
+                      <button
+                        onClick={() => setSkillsOpen((open) => !open)}
+                        title="Use a skill"
+                        aria-haspopup="menu"
+                        aria-expanded={skillsOpen}
+                        className={`flex h-7 items-center gap-1.5 rounded-lg px-2
+                                    text-[length:var(--fs-sm)] transition-colors
+                                    ${skillIds.length || skillsOpen
+                                      ? "bg-[var(--hover)] text-[var(--text)]"
+                                      : "text-[var(--muted)] hover:bg-[var(--hover)]"}`}
+                      >
+                        <IconSparkles className="h-[17px] w-[17px]" />
+                        {skillIds.length > 0 && skillIds.length}
+                      </button>
+
+                      {skillsOpen && (
+                        <div
+                          role="menu"
+                          className="absolute bottom-full left-0 z-20 mb-2 w-64 animate-scale-in
+                                     rounded-xl border border-[var(--border)] bg-[var(--raised)] p-1.5
+                                     shadow-[var(--shadow-pop)]"
+                        >
+                          {optional.map((skill) => (
+                            <button
+                              key={skill.id}
+                              onClick={() => toggleSkill(skill.id)}
+                              className="flex w-full items-start gap-2 rounded-lg px-2.5 py-2 text-left
+                                         hover:bg-[var(--hover)]"
+                            >
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate text-[length:var(--fs-sm2)]">
+                                  {skill.name}
+                                </span>
+                                {skill.description && (
+                                  <span className="block truncate text-[length:var(--fs-xs)] text-[var(--muted)]">
+                                    {skill.description}
+                                  </span>
+                                )}
+                              </span>
+                              {skillIds.includes(skill.id) && (
+                                <IconCheck className="mt-0.5 h-[15px] w-[15px] shrink-0" />
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                 </div>
 
                 {streaming ? (
                   <button
-                    onClick={stop}
+                    onClick={() => {
+                      stopAndUnqueue();
+                      stop();
+                    }}
                     title="Stop generating"
-                    className="rounded-lg bg-[var(--text)] p-2 text-[var(--bg)]
+                    className="rounded-full bg-[var(--text)] p-2.5 text-[var(--bg)]
                                transition-transform duration-150 active:scale-95"
                   >
                     <IconStop className="h-4 w-4" />
@@ -1148,12 +2182,14 @@ export default function AienticChatShell({
                 ) : (
                   <button
                     onClick={send}
-                    disabled={(!input.trim() && images.length === 0) || !activeModel}
+                    disabled={
+                      (!input.trim() && !images.length && !docs.length) || !activeModel
+                    }
                     title="Send"
-                    className="rounded-lg bg-[var(--text)] p-2 text-[var(--bg)]
+                    className="rounded-full bg-[var(--text)] p-2.5 text-[var(--bg)]
                              transition-[background-color,opacity,scale] duration-150
                              active:scale-95 hover:opacity-90 disabled:cursor-not-allowed
-                             disabled:bg-[var(--border)] disabled:text-[var(--muted)]
+                             disabled:bg-[var(--panel-2)] disabled:text-[var(--faint)]
                              disabled:active:scale-100"
                   >
                     <IconArrowUp className="h-4 w-4" />

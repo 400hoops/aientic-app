@@ -249,7 +249,7 @@ export default function SamplerPage({
                   rows={6}
                   placeholder="Applies to every user of this model. Leave empty for the model's built-in default."
                   className="w-full resize-y rounded-xl border border-[var(--border-strong)]
-                             bg-transparent px-4 py-3 font-mono text-[13px] max-md:text-[16px] leading-relaxed
+                             bg-[var(--field)] px-4 py-3 font-mono text-[13px] max-md:text-[16px] leading-relaxed
                              text-[var(--text)] placeholder:text-[var(--faint)]
                              focus:border-[var(--focus)] focus:outline-none"
                 />

@@ -53,7 +53,7 @@ export default function LoginPage({ needsSetup, onSignedIn }) {
             autoFocus
             autoCapitalize="none"
             autoComplete="username"
-            className="w-full rounded-lg border border-[var(--border-strong)] bg-[var(--raised)]
+            className="w-full rounded-lg border border-[var(--border-strong)] bg-[var(--field)]
                        px-3.5 py-2.5 text-[15px] text-[var(--text)] max-md:text-[16px]
                        focus:border-[var(--focus)] focus:outline-none"
           />
@@ -89,7 +89,7 @@ export default function LoginPage({ needsSetup, onSignedIn }) {
         <button
           type="submit"
           disabled={busy || !username.trim() || !password}
-          className="w-full rounded-lg bg-[var(--text)] py-3 text-[14.5px] font-medium text-[var(--bg)]
+          className="w-full rounded-lg bg-[var(--accent)] py-3 text-[14.5px] font-medium text-[var(--accent-fg)]
                      transition-[opacity,scale] duration-150 active:scale-[0.99]
                      hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50
                      disabled:active:scale-100"

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import * as api from "../api.js";
+import { displayName } from "../format.js";
 import AdminShell from "./AdminShell.jsx";
 import Select from "../Select.jsx";
 
@@ -8,12 +9,12 @@ import Select from "../Select.jsx";
 const card =
   "rounded-xl border border-[var(--border)] bg-[var(--panel)] px-6 py-5";
 const field =
-  "w-full rounded-lg border border-[var(--border-strong)] bg-[var(--raised)] px-3.5 py-2.5 " +
+  "w-full rounded-lg border border-[var(--border-strong)] bg-[var(--field)] px-3.5 py-2.5 " +
   "text-[14px] max-md:text-[16px] text-[var(--text)] placeholder:text-[var(--faint)] " +
   "focus:border-[var(--focus)] focus:outline-none";
 const label = "mb-1.5 block text-[13px] text-[var(--text-soft)]";
 const primary =
-  "rounded-lg bg-[var(--text)] px-4 py-2.5 text-[13.5px] text-[var(--bg)] " +
+  "rounded-lg bg-[var(--accent)] px-4 py-2.5 text-[13.5px] text-[var(--accent-fg)] " +
   "transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50";
 const secondary =
   "rounded-lg border border-[var(--border-strong)] bg-[var(--raised)] px-4 py-2.5 " +
@@ -290,7 +291,7 @@ function Endpoints({ onChanged }) {
       <div className="mt-6 overflow-x-auto rounded-xl border border-[var(--border)]">
         <table className="w-full border-collapse text-[13.5px]">
           <thead>
-            <tr className="bg-[var(--panel)] text-[11.5px] uppercase tracking-wide text-[var(--faint)]">
+            <tr className="bg-[var(--panel)] text-[12px] text-[var(--faint)]">
               <th className="px-4 py-3 text-left font-medium">Label</th>
               <th className="px-4 py-3 text-left font-medium">Base URL</th>
               <th className="px-4 py-3 text-left font-medium">Model param</th>
@@ -391,7 +392,7 @@ function Users({ currentUser }) {
       const res = await api.addUser(draft.username, draft.password, draft.role);
       setUsers(res.users);
       setDraft({ username: "", password: "", role: "user" });
-      setNotice(`Added ${res.user.username}.`);
+      setNotice(`Added ${displayName(res.user.username)}.`);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -402,7 +403,7 @@ function Users({ currentUser }) {
   const remove = async (user) => {
     if (
       !window.confirm(
-        `Delete ${user.username}? Their conversations are deleted with the account.`,
+        `Delete ${displayName(user.username)}? Their conversations are deleted with the account.`,
       )
     )
       return;
@@ -449,7 +450,7 @@ function Users({ currentUser }) {
       await api.setUserPassword(user.id, newPassword);
       setChangingId(null);
       setNewPassword("");
-      setNotice(`Password changed for ${user.username}.`);
+      setNotice(`Password changed for ${displayName(user.username)}.`);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -517,7 +518,7 @@ function Users({ currentUser }) {
       <div className="mt-6 overflow-x-auto rounded-xl border border-[var(--border)]">
         <table className="w-full border-collapse text-[13.5px]">
           <thead>
-            <tr className="bg-[var(--panel)] text-[11.5px] uppercase tracking-wide text-[var(--faint)]">
+            <tr className="bg-[var(--panel)] text-[12px] text-[var(--faint)]">
               <th className="px-4 py-3 text-left font-medium">Username</th>
               <th className="px-4 py-3 text-left font-medium">Role</th>
               <th className="px-4 py-3" />
@@ -527,7 +528,7 @@ function Users({ currentUser }) {
             {users.map((u) => (
               <tr key={u.id} className="border-t border-[var(--border)]">
                 <td className="px-4 py-3">
-                  {u.username}
+                  {displayName(u.username)}
                   {u.id === currentUser.id && (
                     <span className="ml-2 text-[12px] text-[var(--faint)]">
                       (You)

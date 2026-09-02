@@ -11,15 +11,25 @@ import {
   ChevronDown,
   ChevronRight,
   Copy,
+  Ghost,
+  Download,
+  FileText,
+  Library,
+  Link2,
   LogOut,
+  MoreHorizontal,
   Moon,
   PanelLeft,
   Pencil,
+  Pin,
   Plus,
   RotateCw,
   Search,
+  Settings,
   Shield,
   SlidersHorizontal,
+  Upload,
+  Sparkles,
   Square,
   Sun,
   Trash2,
@@ -38,16 +48,26 @@ export const IconCheck = thin(Check, "IconCheck");
 export const IconChevronDown = thin(ChevronDown, "IconChevronDown");
 export const IconChevronRight = thin(ChevronRight, "IconChevronRight");
 export const IconCopy = thin(Copy, "IconCopy");
+export const IconDownload = thin(Download, "IconDownload");
+export const IconFileText = thin(FileText, "IconFileText");
+export const IconGhost = thin(Ghost, "IconGhost");
+export const IconLibrary = thin(Library, "IconLibrary");
+export const IconLink = thin(Link2, "IconLink");
 export const IconLogOut = thin(LogOut, "IconLogOut");
 export const IconMoon = thin(Moon, "IconMoon");
+export const IconMore = thin(MoreHorizontal, "IconMore");
 export const IconPanel = thin(PanelLeft, "IconPanel");
 export const IconPencil = thin(Pencil, "IconPencil");
+export const IconPin = thin(Pin, "IconPin");
 export const IconPlus = thin(Plus, "IconPlus");
 export const IconRefresh = thin(RotateCw, "IconRefresh");
 export const IconSearch = thin(Search, "IconSearch");
+export const IconSettings = thin(Settings, "IconSettings");
 export const IconShield = thin(Shield, "IconShield");
 export const IconSliders = thin(SlidersHorizontal, "IconSliders");
+export const IconSparkles = thin(Sparkles, "IconSparkles");
 export const IconStop = thin(Square, "IconStop");
 export const IconSun = thin(Sun, "IconSun");
+export const IconUpload = thin(Upload, "IconUpload");
 export const IconTrash = thin(Trash2, "IconTrash");
 export const IconX = thin(X, "IconX");

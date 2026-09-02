@@ -33,3 +33,56 @@ export function relativeTime(ts) {
 }
 
 export const initial = (name) => (name || "?").trim().charAt(0).toUpperCase();
+
+/**
+ * A username as it's shown, rather than as it's stored.
+ *
+ * Accounts are typed in lower case and matched case-insensitively, but a
+ * name printed back at someone is a name — "matt" in the corner of the
+ * screen reads like a database row. Only the first letter is touched: the
+ * rest is however they wrote it, so mcDonald and JJ survive intact.
+ *
+ * Display only. The stored username, the login form and the {{USER_NAME}}
+ * the model is given all keep the real value.
+ */
+export const displayName = (name) => {
+  const text = String(name || "").trim();
+  return text ? text.charAt(0).toUpperCase() + text.slice(1) : text;
+};
+
+/**
+ * Which slab of the history a chat belongs to.
+ *
+ * The sidebar is a list of everything you've ever asked, and an unbroken
+ * one gives no sense of when — "yesterday" and "last spring" look the same.
+ * These are the same buckets a person uses out loud.
+ */
+export function dateGroup(ts) {
+  if (!ts) return "Older";
+  const day = 24 * 60 * 60 * 1000;
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+  const start = startOfToday.getTime();
+
+  if (ts >= start) return "Today";
+  if (ts >= start - day) return "Yesterday";
+  if (ts >= start - 7 * day) return "Previous 7 days";
+  if (ts >= start - 30 * day) return "Previous 30 days";
+  // Inside this year the month is the useful label; before that, the year.
+  const then = new Date(ts);
+  if (then.getFullYear() === startOfToday.getFullYear())
+    return then.toLocaleString(undefined, { month: "long" });
+  return String(then.getFullYear());
+}
+
+/** The buckets above, in order, with their chats — empty ones dropped. */
+export function groupByDate(conversations) {
+  const groups = [];
+  for (const convo of conversations) {
+    const label = dateGroup(convo.updatedAt);
+    const last = groups[groups.length - 1];
+    if (last && last.label === label) last.items.push(convo);
+    else groups.push({ label, items: [convo] });
+  }
+  return groups;
+}

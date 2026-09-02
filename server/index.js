@@ -19,6 +19,23 @@ import cookieParser from "cookie-parser";
 
 import { db, save, uid, dataDir } from "./storage.js";
 import {
+  touchConversation,
+  removeConversationFiles,
+  syncAllConversations,
+  conversationJson,
+  conversationMarkdown,
+  fileStem,
+} from "./chatFiles.js";
+import { parseUpload } from "./claudeImport.js";
+import { readUrl } from "./readpage.js";
+import {
+  addDocument,
+  library,
+  removeDocument,
+  search,
+  summarise,
+} from "./knowledge.js";
+import {
   attachUser,
   requireAuth,
   requireAdmin,
@@ -30,6 +47,7 @@ import {
   publicUser,
   needsBootstrap,
   hashPassword,
+  COOKIE,
 } from "./auth.js";
 import {
   listModels,
@@ -166,6 +184,9 @@ const MAX_LEN = {
   title: 200,
   content: 100_000,
   systemPrompt: 20_000,
+  memory: 1_000,
+  attachment: 200_000,       // one pasted article or dropped text file
+  attachmentsTotal: 400_000, // everything attached to a single turn
   imageDataUrl: 12_000_000, // ≈9 MB of image in base64
 };
 
@@ -193,6 +214,43 @@ const sanitizeImages = (raw) =>
             s.length <= MAX_LEN.imageDataUrl
         )
         .slice(0, MAX_IMAGES);
+
+/**
+ * Text carried alongside a turn: a pasted article, a dropped .txt or .md.
+ *
+ * Kept out of the message body on purpose. A 40 KB article pasted into the
+ * composer buries the actual question in a wall of someone else's prose —
+ * as an attachment the question stays a question, the source stays quotable
+ * verbatim, and both are stored separately (see chatFiles.js, which already
+ * writes attachments into the Markdown mirror because the Claude importer
+ * has produced them since day one).
+ */
+const MAX_ATTACHMENTS = 5;
+
+const sanitizeAttachments = (raw) => {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  let budget = MAX_LEN.attachmentsTotal;
+  for (const item of raw.slice(0, MAX_ATTACHMENTS)) {
+    if (!item || typeof item !== "object") continue;
+    const text = typeof item.text === "string" ? item.text : "";
+    if (!text.trim()) continue;
+    const clipped = text.slice(0, Math.min(MAX_LEN.attachment, budget));
+    if (!clipped) break;
+    budget -= clipped.length;
+    out.push({
+      name: String(item.name || "Pasted text").slice(0, MAX_LEN.label),
+      // Where it came from, when it came from somewhere: the bubble links
+      // it, and the model is told, so it can say "the piece says…" rather
+      // than inventing a citation.
+      ...(typeof item.url === "string" && /^https?:\/\//i.test(item.url)
+        ? { url: item.url.slice(0, MAX_LEN.baseUrl) }
+        : {}),
+      text: clipped,
+    });
+  }
+  return out;
+};
 
 /** normaliseBase + the blocklist + a length cap, as one check. */
 const baseProblem = (base) => {
@@ -389,6 +447,45 @@ app.post("/api/auth/login", loginRateLimit, (req, res) => {
     return bad(res, 401, "Invalid username or password");
   clearLoginAttempts(req);
   startSession(req, res, user);
+  ok(res, { user: publicUser(user) });
+});
+
+/**
+ * Change your own username or password.
+ *
+ * The current password is required for either — a borrowed, unlocked
+ * browser shouldn't be able to lock the owner out of their own account.
+ * Admins change *other* people's credentials under Admin → Users; this is
+ * only ever the signed-in account.
+ */
+app.patch("/api/account", requireAuth, (req, res) => {
+  const { username, currentPassword, newPassword } = req.body || {};
+  const user = db.users.find((u) => u.id === req.user.id);
+  if (!user) return bad(res, 404, "No such account");
+  if (!verifyPassword(user, currentPassword))
+    return bad(res, 403, "That isn't your current password");
+
+  const name = typeof username === "string" ? username.trim() : "";
+  if (name && name !== user.username) {
+    if (tooLong(name, MAX_LEN.username))
+      return bad(res, 400, `Username must be at most ${MAX_LEN.username} characters`);
+    // findUser is case-insensitive, which is what makes this a real check.
+    if (findUser(name)) return bad(res, 409, "That username is taken");
+    user.username = name;
+  }
+
+  if (newPassword) {
+    if (newPassword.length < 8)
+      return bad(res, 400, "Passwords must be at least 8 characters");
+    user.passwordHash = hashPassword(newPassword);
+    // Every other session was signed in with the old password; a password
+    // change is also how you get a stolen one out.
+    for (const [token, session] of Object.entries(db.sessions))
+      if (session.userId === user.id && token !== req.cookies?.[COOKIE])
+        delete db.sessions[token];
+  }
+
+  save();
   ok(res, { user: publicUser(user) });
 });
 
@@ -667,7 +764,12 @@ app.delete("/api/admin/users/:id", requireAdmin, (req, res) => {
   if (index === -1) return bad(res, 404, "No such account");
 
   const [removed] = db.users.splice(index, 1);
+  for (const c of db.conversations)
+    if (c.userId === removed.id) removeConversationFiles(c.id);
   db.conversations = db.conversations.filter((c) => c.userId !== removed.id);
+  delete db.memories[removed.id];
+  delete db.skills[removed.id];
+  delete db.knowledge[removed.id];
   for (const [token, session] of Object.entries(db.sessions))
     if (session.userId === removed.id) delete db.sessions[token];
   save();
@@ -680,6 +782,9 @@ const summary = (c) => ({
   id: c.id,
   title: c.title,
   endpointId: c.endpointId,
+  skillIds: c.skillIds || [],
+  useKnowledge: !!c.useKnowledge,
+  pinned: !!c.pinned,
   createdAt: c.createdAt,
   updatedAt: c.updatedAt,
 });
@@ -703,6 +808,66 @@ app.get("/api/conversations", requireAuth, (req, res) =>
   })
 );
 
+/**
+ * Search your own history — titles *and* what was actually said.
+ *
+ * Everything is already in memory, so this is a plain scan: a few hundred
+ * conversations cost less than the round trip that carried the query. Each
+ * hit comes back with the line it matched, so the sidebar can show why.
+ */
+// Lopsided on purpose: the sidebar is narrow and truncates the tail, so the
+// match has to sit near the front of the snippet to survive the ellipsis.
+const SNIPPET_BEFORE = 16;
+const SNIPPET_AFTER = 120;
+
+const snippetAround = (text, at, needle) => {
+  const from = Math.max(0, at - SNIPPET_BEFORE);
+  const to = Math.min(text.length, at + needle.length + SNIPPET_AFTER);
+  return (
+    (from > 0 ? "…" : "") +
+    text.slice(from, to).replace(/\s+/g, " ").trim() +
+    (to < text.length ? "…" : "")
+  );
+};
+
+app.get("/api/conversations/search", requireAuth, (req, res) => {
+  const q = String(req.query.q || "").trim().toLowerCase();
+  if (!q) return ok(res, { conversations: [] });
+
+  const results = [];
+  for (const convo of db.conversations) {
+    if (convo.userId !== req.user.id) continue;
+
+    const inTitle = convo.title.toLowerCase().includes(q);
+    let hit = null;
+    let matches = 0;
+    for (const m of convo.messages) {
+      const text = m.content || "";
+      const at = text.toLowerCase().indexOf(q);
+      if (at === -1) continue;
+      matches++;
+      if (!hit)
+        hit = {
+          messageId: m.id,
+          role: m.role,
+          snippet: snippetAround(text, at, q),
+        };
+    }
+    if (!inTitle && !hit) continue;
+    results.push({ ...summary(convo), matches, ...(hit || {}) });
+  }
+
+  // Title matches first — you usually mean the chat you named — then the
+  // most recently touched.
+  results.sort((a, b) => {
+    const aTitle = a.title.toLowerCase().includes(q);
+    const bTitle = b.title.toLowerCase().includes(q);
+    if (aTitle !== bTitle) return aTitle ? -1 : 1;
+    return b.updatedAt - a.updatedAt;
+  });
+  ok(res, { conversations: results.slice(0, 50) });
+});
+
 app.get("/api/conversations/:id", requireAuth, (req, res) => {
   const convo = owned(req);
   if (!convo) return bad(res, 404, "No such conversation");
@@ -720,26 +885,33 @@ app.post("/api/conversations", requireAuth, (req, res) => {
     endpointId: endpointId || db.endpoints[0]?.id || null,
     createdAt: Date.now(),
     updatedAt: Date.now(),
+    skillIds: [],
     messages: [],
   };
   db.conversations.push(convo);
   save();
+  touchConversation(convo);
   ok(res, { conversation: convo });
 });
 
 app.patch("/api/conversations/:id", requireAuth, (req, res) => {
   const convo = owned(req);
   if (!convo) return bad(res, 404, "No such conversation");
-  const { title, endpointId } = req.body || {};
+  const { title, endpointId, pinned } = req.body || {};
   if (typeof title === "string" && title.trim())
     convo.title = title.trim().slice(0, MAX_LEN.title);
+  // Pinning is not an edit of the conversation, so it deliberately doesn't
+  // touch updatedAt below — a chat you pin shouldn't jump to the top of
+  // "Recents" as though you'd just used it.
+  if (typeof pinned === "boolean") convo.pinned = pinned;
   if (endpointId) {
     const endpoint = db.endpoints.find((e) => e.id === endpointId);
     if (!endpoint) return bad(res, 400, "That model is no longer configured");
     convo.endpointId = endpoint.id;
   }
-  convo.updatedAt = Date.now();
+  if (title !== undefined || endpointId !== undefined) convo.updatedAt = Date.now();
   save();
+  touchConversation(convo);
   ok(res, { conversation: summary(convo) });
 });
 
@@ -748,6 +920,7 @@ app.delete("/api/conversations/:id", requireAuth, (req, res) => {
   if (!convo) return bad(res, 404, "No such conversation");
   db.conversations = db.conversations.filter((c) => c.id !== convo.id);
   save();
+  removeConversationFiles(convo.id);
   ok(res, {});
 });
 
@@ -757,7 +930,13 @@ app.patch("/api/conversations/:id/messages/:messageId", requireAuth, (req, res) 
   const message = convo.messages.find((m) => m.id === req.params.messageId);
   if (!message) return bad(res, 404, "No such message");
 
-  const { content, truncate } = req.body || {};
+  const { content, images, truncate } = req.body || {};
+  // The edited turn is still a turn: text, photos, or both — never neither.
+  const nextContent = typeof content === "string" ? content : message.content;
+  const nextImages = images === undefined ? message.images : sanitizeImages(images);
+  if (!nextContent.trim() && !nextImages?.length)
+    return bad(res, 400, "Message is empty");
+
   if (typeof content === "string") {
     if (content.length > MAX_LEN.content)
       return bad(
@@ -767,6 +946,12 @@ app.patch("/api/conversations/:id/messages/:messageId", requireAuth, (req, res) 
       );
     message.content = content;
   }
+  // Images can only be dropped from an existing turn, never added here —
+  // whatever comes back is filtered down to what the message already had.
+  if (images !== undefined) {
+    const kept = new Set(nextImages);
+    message.images = (message.images || []).filter((url) => kept.has(url));
+  }
   // Editing a user message drops everything after it, ready for a re-run.
   if (truncate) {
     const at = convo.messages.indexOf(message);
@@ -774,16 +959,405 @@ app.patch("/api/conversations/:id/messages/:messageId", requireAuth, (req, res) 
   }
   convo.updatedAt = Date.now();
   save();
+  touchConversation(convo);
   ok(res, { conversation: convo });
 });
 
 app.delete("/api/conversations/:id/messages/:messageId", requireAuth, (req, res) => {
   const convo = owned(req);
   if (!convo) return bad(res, 404, "No such conversation");
-  convo.messages = convo.messages.filter((m) => m.id !== req.params.messageId);
+
+  const at = convo.messages.findIndex((m) => m.id === req.params.messageId);
+  if (at === -1) return bad(res, 404, "No such message");
+
+  // A question and the answers it produced are one exchange: deleting the
+  // question on its own used to leave a reply hanging under whatever came
+  // before it, which then went back to the model as history.
+  let end = at + 1;
+  if (convo.messages[at].role === "user")
+    while (convo.messages[end]?.role === "assistant") end++;
+  convo.messages.splice(at, end - at);
   convo.updatedAt = Date.now();
   save();
+  touchConversation(convo);
   ok(res, { conversation: convo });
+});
+
+/* ---------- memory -------------------------------------------------------- */
+
+/**
+ * Things the model should know about you across every chat.
+ *
+ * Kept deliberately dumb: a short list of lines you write yourself, added
+ * to the system turn of every generation (see generation.js). Nothing here
+ * is extracted from conversations automatically — what the model is told
+ * about you is a list you can read in full and delete a line from.
+ */
+const MAX_MEMORIES = 100;
+const memoriesFor = (userId) => (db.memories[userId] ||= []);
+
+app.get("/api/memories", requireAuth, (req, res) =>
+  ok(res, { memories: memoriesFor(req.user.id) })
+);
+
+app.post("/api/memories", requireAuth, (req, res) => {
+  const text = String(req.body?.text ?? "").trim();
+  if (!text) return bad(res, 400, "Nothing to remember");
+  if (text.length > MAX_LEN.memory)
+    return bad(res, 400, `Memories must be at most ${MAX_LEN.memory} characters`);
+
+  const memories = memoriesFor(req.user.id);
+  if (memories.length >= MAX_MEMORIES)
+    return bad(res, 400, `That's the ${MAX_MEMORIES}-memory limit — delete one first`);
+
+  memories.push({ id: uid(), text, createdAt: Date.now() });
+  save();
+  ok(res, { memories });
+});
+
+app.patch("/api/memories/:id", requireAuth, (req, res) => {
+  const memories = memoriesFor(req.user.id);
+  const memory = memories.find((m) => m.id === req.params.id);
+  if (!memory) return bad(res, 404, "No such memory");
+  const text = String(req.body?.text ?? "").trim();
+  if (!text) return bad(res, 400, "Nothing to remember");
+  if (text.length > MAX_LEN.memory)
+    return bad(res, 400, `Memories must be at most ${MAX_LEN.memory} characters`);
+  memory.text = text;
+  memory.updatedAt = Date.now();
+  save();
+  ok(res, { memories });
+});
+
+app.delete("/api/memories/:id", requireAuth, (req, res) => {
+  db.memories[req.user.id] = memoriesFor(req.user.id).filter(
+    (m) => m.id !== req.params.id
+  );
+  save();
+  ok(res, { memories: db.memories[req.user.id] });
+});
+
+/* ---------- skills -------------------------------------------------------- */
+
+/**
+ * A skill is a named block of instructions you can hand a chat.
+ *
+ * The same idea as memory, scoped differently: memory is always on and
+ * about you; a skill is about a job ("Rewrite in my email voice", "Answer
+ * as a code reviewer") and applies to the conversations you attach it to.
+ * One marked `always` is simply attached to every chat without asking.
+ *
+ * There is no tool-calling here and none is implied — a skill is prompt
+ * text, and the model does with it what a system turn does.
+ */
+const MAX_SKILLS = 50;
+const skillsFor = (userId) => (db.skills[userId] ||= []);
+
+const skillProblem = (name, instructions) => {
+  if (!name?.trim()) return "A skill needs a name";
+  if (tooLong(name, MAX_LEN.label)) return "That name is too long";
+  if (!instructions?.trim()) return "A skill needs instructions";
+  if (tooLong(instructions, MAX_LEN.systemPrompt))
+    return `Instructions must be at most ${MAX_LEN.systemPrompt} characters`;
+  return null;
+};
+
+app.get("/api/skills", requireAuth, (req, res) =>
+  ok(res, { skills: skillsFor(req.user.id) })
+);
+
+app.post("/api/skills", requireAuth, (req, res) => {
+  const { name, description, instructions, always } = req.body || {};
+  const problem = skillProblem(name, instructions);
+  if (problem) return bad(res, 400, problem);
+
+  const skills = skillsFor(req.user.id);
+  if (skills.length >= MAX_SKILLS)
+    return bad(res, 400, `That's the ${MAX_SKILLS}-skill limit — delete one first`);
+
+  skills.push({
+    id: uid(),
+    name: name.trim(),
+    description: (description || "").trim().slice(0, MAX_LEN.note),
+    instructions: instructions.trim(),
+    always: always === true,
+    createdAt: Date.now(),
+  });
+  save();
+  ok(res, { skills });
+});
+
+app.patch("/api/skills/:id", requireAuth, (req, res) => {
+  const skills = skillsFor(req.user.id);
+  const skill = skills.find((s) => s.id === req.params.id);
+  if (!skill) return bad(res, 404, "No such skill");
+
+  const { name, description, instructions, always } = req.body || {};
+  const nextName = name === undefined ? skill.name : name;
+  const nextInstructions =
+    instructions === undefined ? skill.instructions : instructions;
+  const problem = skillProblem(nextName, nextInstructions);
+  if (problem) return bad(res, 400, problem);
+
+  skill.name = nextName.trim();
+  skill.instructions = nextInstructions.trim();
+  if (description !== undefined)
+    skill.description = String(description).trim().slice(0, MAX_LEN.note);
+  if (always !== undefined) skill.always = always === true;
+  skill.updatedAt = Date.now();
+  save();
+  ok(res, { skills });
+});
+
+app.delete("/api/skills/:id", requireAuth, (req, res) => {
+  db.skills[req.user.id] = skillsFor(req.user.id).filter(
+    (s) => s.id !== req.params.id
+  );
+  // A deleted skill can't stay attached to the chats that were using it.
+  for (const convo of db.conversations)
+    if (convo.userId === req.user.id && convo.skillIds?.length)
+      convo.skillIds = convo.skillIds.filter((id) => id !== req.params.id);
+  save();
+  ok(res, { skills: db.skills[req.user.id] });
+});
+
+/* ---------- import / export ---------------------------------------------- */
+
+/**
+ * Take a Claude data export (Settings → Privacy → Export data) and turn it
+ * into conversations on this account.
+ *
+ * The zip Anthropic mails out can be uploaded whole, or just the
+ * `conversations.json` from inside it; a chat this app wrote to
+ * `data/chats/` round-trips too. The body is raw bytes rather than JSON so
+ * a 200 MB archive isn't base64'd on the way in.
+ */
+app.post(
+  "/api/conversations/import",
+  requireAuth,
+  express.raw({ type: () => true, limit: "200mb" }),
+  (req, res) => {
+    // express.json (mounted globally) will have parsed the body already if
+    // the upload arrived as application/json; put it back as bytes.
+    const buffer = Buffer.isBuffer(req.body)
+      ? req.body
+      : req.body && typeof req.body === "object"
+        ? Buffer.from(JSON.stringify(req.body))
+        : Buffer.alloc(0);
+    if (!buffer.length) return bad(res, 400, "No file was uploaded");
+
+    let imported;
+    try {
+      imported = parseUpload(buffer, req.user.id);
+    } catch (err) {
+      return bad(res, 400, err.message);
+    }
+    if (!imported.length)
+      return bad(res, 400, "No conversations with any messages in that file");
+
+    // Imported chats have no endpoint of their own — reading one is fine,
+    // and continuing it picks up whatever model is configured now.
+    const fallback = db.endpoints[0]?.id || null;
+    for (const convo of imported) {
+      convo.endpointId = fallback;
+      db.conversations.push(convo);
+      touchConversation(convo);
+    }
+    save();
+    ok(res, {
+      imported: imported.length,
+      messages: imported.reduce((n, c) => n + c.messages.length, 0),
+      conversations: db.conversations
+        .filter((c) => c.userId === req.user.id)
+        .sort((a, b) => b.updatedAt - a.updatedAt)
+        .map(summary),
+    });
+  }
+);
+
+/** One conversation as a file — the same pair kept in `data/chats/`. */
+app.get("/api/conversations/:id/export", requireAuth, (req, res) => {
+  const convo = owned(req);
+  if (!convo) return bad(res, 404, "No such conversation");
+  const markdown = req.query.format === "md";
+  res.setHeader(
+    "Content-Disposition",
+    `attachment; filename="${fileStem(convo)}.${markdown ? "md" : "json"}"`
+  );
+  res.type(markdown ? "text/markdown" : "application/json");
+  res.send(
+    markdown
+      ? conversationMarkdown(convo)
+      : JSON.stringify(conversationJson(convo), null, 2)
+  );
+});
+
+/* ---------- knowledge ----------------------------------------------------- */
+
+/**
+ * The documents a conversation can look things up in.
+ *
+ * Added once, used by any chat that turns retrieval on — as opposed to an
+ * attachment, which belongs to the one turn it rode in on. Retrieval itself
+ * lives in knowledge.js; these routes are the library's front desk.
+ */
+app.get("/api/knowledge", requireAuth, (req, res) =>
+  ok(res, { documents: library(req.user.id).map(summarise) })
+);
+
+app.post("/api/knowledge", requireAuth, async (req, res) => {
+  const { title, text, url } = req.body || {};
+  try {
+    // A URL is fetched and read here, the same way a pasted link is — so a
+    // page can go into the library without a round trip through the
+    // composer.
+    if (url && !text) {
+      const page = await readUrl(url);
+      return ok(res, {
+        document: summarise(
+          addDocument(req.user.id, {
+            title: title || page.title,
+            text: page.text,
+            url: page.url,
+            source: "link",
+          })
+        ),
+        documents: library(req.user.id).map(summarise),
+      });
+    }
+    const document = addDocument(req.user.id, { title, text, url, source: "text" });
+    ok(res, {
+      document: summarise(document),
+      documents: library(req.user.id).map(summarise),
+    });
+  } catch (err) {
+    bad(res, 400, err.message);
+  }
+});
+
+app.delete("/api/knowledge/:id", requireAuth, (req, res) => {
+  removeDocument(req.user.id, req.params.id);
+  ok(res, { documents: library(req.user.id).map(summarise) });
+});
+
+/**
+ * What a question would retrieve, without asking a model anything.
+ *
+ * Retrieval that can't be inspected is retrieval nobody can debug: when an
+ * answer misses something you know is in there, this is how you find out
+ * whether the passage was never retrieved or was retrieved and ignored.
+ */
+app.get("/api/knowledge/search", requireAuth, (req, res) =>
+  ok(res, {
+    results: search(req.user.id, String(req.query.q || "")).map((hit) => ({
+      title: hit.doc.title,
+      url: hit.doc.url,
+      score: Math.round(hit.score * 100) / 100,
+      text: hit.text.slice(0, 400),
+    })),
+  })
+);
+
+/* ---------- reading a link ----------------------------------------------- */
+
+/**
+ * Fetch a page and hand back its article, for attaching to a turn.
+ *
+ * The server does the fetching, not the browser: a page is cross-origin to
+ * the app, and the reader's own network is the wrong network to fetch from
+ * anyway. Every rule about *what* may be fetched lives in readpage.js — this
+ * route is only the door.
+ *
+ * Signed-in accounts only, and one at a time per account: fetching is the
+ * one thing here that makes the server talk to the open internet, and a
+ * loop of tabs shouldn't be able to turn it into a crawler.
+ */
+const reading = new Set();
+
+app.post("/api/read-url", requireAuth, async (req, res) => {
+  if (reading.has(req.user.id))
+    return bad(res, 429, "Still reading the last link — one at a time");
+
+  reading.add(req.user.id);
+  try {
+    const page = await readUrl(req.body?.url);
+    ok(res, { page });
+  } catch (err) {
+    // These messages are written to be read by the person who pasted the
+    // link ("that page answered 404"), so they go straight through.
+    bad(res, 400, err.name === "AbortError" ? "That page took too long" : err.message);
+  } finally {
+    reading.delete(req.user.id);
+  }
+});
+
+/* ---------- private chats ------------------------------------------------ */
+
+/**
+ * A conversation the server never keeps.
+ *
+ * Everything else here is stored so history follows the account — which is
+ * the whole point of the app, and exactly what you don't want for some
+ * questions. A private chat lives in the browser tab: the client posts the
+ * whole exchange each turn, the answer streams back, and nothing touches
+ * data.json or data/chats. Closing the tab is the delete.
+ *
+ * Your skills and memory still apply — they're yours, and the model is
+ * yours. What's missing is only the writing down.
+ */
+app.post("/api/private/stream", requireAuth, async (req, res) => {
+  const { messages, endpointId, timeZone, skillIds, useKnowledge } = req.body || {};
+  const endpoint = db.endpoints.find((e) => e.id === endpointId);
+  if (!endpoint) return bad(res, 400, "That model is no longer configured");
+  if (!Array.isArray(messages) || !messages.length)
+    return bad(res, 400, "Nothing to answer");
+
+  const history = [];
+  for (const m of messages.slice(-200)) {
+    const role = m?.role === "assistant" ? "assistant" : "user";
+    const content = typeof m?.content === "string" ? m.content : "";
+    if (tooLong(content, MAX_LEN.content))
+      return bad(res, 400, `Messages must be at most ${MAX_LEN.content} characters`);
+    const images = sanitizeImages(m?.images);
+    const attached = sanitizeAttachments(m?.attachments);
+    if (!content && !images.length && !attached.length) continue;
+    history.push({
+      id: uid(),
+      role,
+      content,
+      images,
+      ...(attached.length ? { attachments: attached } : {}),
+      createdAt: Date.now(),
+    });
+  }
+  if (!history.length) return bad(res, 400, "Nothing to answer");
+
+  const mine = new Set(skillsFor(req.user.id).map((s) => s.id));
+  // A conversation object that exists only for the length of this request:
+  // it is never pushed into db.conversations, so nothing persists it and
+  // the file mirror has nothing to write.
+  const conversation = {
+    id: "private-" + uid(),
+    userId: req.user.id,
+    title: "Private chat",
+    endpointId: endpoint.id,
+    skillIds: Array.isArray(skillIds) ? skillIds.filter((id) => mine.has(id)) : [],
+    useKnowledge: useKnowledge === true,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    messages: history,
+  };
+
+  await streamCompletion({
+    res,
+    conversation,
+    endpoint,
+    sampler: await samplerFor(endpoint.id),
+    apiKey: db.keys[endpoint.baseUrl],
+    history,
+    user: req.user,
+    clientTimeZone: typeof timeZone === "string" ? timeZone : undefined,
+  });
 });
 
 /* ---------- generation --------------------------------------------------- */
@@ -809,8 +1383,18 @@ app.post("/api/conversations/:id/stream", requireAuth, async (req, res) => {
   if (isGenerating(convo.id))
     return bad(res, 409, "That conversation is already generating");
 
-  const { content, endpointId, regenerate, timeZone } = req.body || {};
+  const { content, endpointId, regenerate, timeZone, skillIds, useKnowledge } =
+    req.body || {};
+  // Sticky, like skills: turn it on once and the follow-ups keep it.
+  if (typeof useKnowledge === "boolean") convo.useKnowledge = useKnowledge;
+  // Skills stay attached to the conversation once chosen, so a follow-up
+  // question keeps the same instructions without re-picking them.
+  if (Array.isArray(skillIds)) {
+    const mine = new Set(skillsFor(req.user.id).map((s) => s.id));
+    convo.skillIds = skillIds.filter((id) => mine.has(id)).slice(0, MAX_SKILLS);
+  }
   const images = sanitizeImages(req.body?.images);
+  const attachments = sanitizeAttachments(req.body?.attachments);
   // The browser's IANA timezone, so {{CURRENT_*}} tokens resolve to where
   // the user is, not where the server runs. Invalid values fall back to
   // the server's clock inside expandSystemPrompt.
@@ -830,8 +1414,10 @@ app.post("/api/conversations/:id/stream", requireAuth, async (req, res) => {
       convo.messages.pop();
   } else {
     const text = content?.trim();
-    // A turn is valid with text, photos, or both — but not neither.
-    if (!text && !images.length) return bad(res, 400, "Message is empty");
+    // A turn is valid with text, photos, attached text, or any mix — but
+    // not with none of them.
+    if (!text && !images.length && !attachments.length)
+      return bad(res, 400, "Message is empty");
     if (text && text.length > MAX_LEN.content)
       return bad(
         res,
@@ -843,6 +1429,7 @@ app.post("/api/conversations/:id/stream", requireAuth, async (req, res) => {
       role: "user",
       content: text || "",
       images,
+      ...(attachments.length ? { attachments } : {}),
       createdAt: Date.now(),
     });
     if (convo.title === "New chat" && text) convo.title = titleFrom(text);
@@ -850,6 +1437,7 @@ app.post("/api/conversations/:id/stream", requireAuth, async (req, res) => {
 
   convo.updatedAt = Date.now();
   save();
+  touchConversation(convo);
 
   await streamCompletion({
     res,
@@ -911,6 +1499,9 @@ server.listen(PORT, "0.0.0.0", () => {
     `[aientic] listening on http${tls ? "s" : ""}://0.0.0.0:${PORT}`
   );
   console.log(`[aientic] data directory: ${dataDir}`);
+  // Bring data/chats/ up to date with the store, so a directory that
+  // predates this mirror (or was cleaned out) fills itself back in.
+  syncAllConversations();
   if (needsBootstrap())
     console.log("[aientic] no accounts yet — open the app to create the admin");
 });

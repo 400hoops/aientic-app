@@ -6,50 +6,135 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 /* One palette, two values each. Components reference the variables, so a
-   component almost never needs a dark: variant of its own. */
-/* Plain grayscale — no warm tint. */
+   component almost never needs a dark: variant of its own — and no
+   component carries a colour of its own at all: there is no #hex, rgba()
+   or Tailwind palette class anywhere in src/*.jsx, so a theme change is a
+   change to this file and nothing else.
+ 
+   Which token goes where — the rules the components follow:
+ 
+     --bg          the page itself
+     --panel       a surface attached to the page: the sidebar, a table
+                   header, a well inside a card
+     --panel-2     a well inside a well (code blocks)
+     --raised      anything floating above the page: menus, dialogs, the
+                   composer card
+     --field       anything you type or choose in, on any surface, always
+                   with a --border-strong edge
+     --hover       any control's hover; --active, its selected state
+     --danger*     failure states only — the one place a hue survives,
+                   because an error that reads as ordinary text isn't one
+     --accent*     the role of "pressed / current", played here by ink
+     --ok          a loaded model, marked by presence rather than colour
+     --scrim*      the veil behind a drawer, dialog or the lightbox
+     --shadow-*    card / pop / modal elevation, never an ad-hoc shadow */
+/* Warm paper, not white.
+ *
+ * Every grey here has a little yellow in it — the page is a sheet of paper
+ * rather than a lit panel, which is what keeps a long transcript readable
+ * for an hour at a time. Beyond that the palette is one tone: no accent
+ * hue, no status colours except the one that has to be seen (danger).
+ * Emphasis is carried by weight and contrast instead. */
 :root {
-  --bg: #ffffff;
-  --panel: #f4f4f4;
-  --panel-2: #ececec;
+  --bg: #faf9f5;
+  --panel: #f2f0e9;
+  --panel-2: #eae7dd;
   --raised: #ffffff;
-  --border: #e2e2e2;
-  --border-strong: #d4d4d4;
-  --text: #000000;
-  --text-soft: #333333;
-  --muted: #737373;
-  --faint: #a3a3a3;
-  --hover: #ececec;
-  --active: #e0e0e0;
-  --focus: #b5b5b5;
+  --border: #e6e3d8;
+  --border-strong: #d8d4c6;
+  --text: #191917;
+  --text-soft: #3d3d39;
+  --muted: #73716a;
+  --faint: #a5a29a;
+  --hover: #ebe8df;
+  --active: #e3dfd3;
+  --focus: #8f8b80;
+
+  /* "Accent" is a role, not a colour: the thing you press, the thing you're
+     on. In a monotone palette that role is played by ink on paper — weight
+     and contrast rather than hue. The names stay so a future theme can put
+     a colour back in one place. */
+  --accent: #191917;
+  --accent-hover: #000000;
+  --accent-fg: #faf9f5;
+  --accent-soft: #e3dfd3;
   --danger: #9a3f36;
   --danger-bg: #f9eeec;
   --danger-border: #e2c3bf;
+  /* The one non-grey in the app: a model loaded in memory. */
+  /* Loaded-in-memory. Grey, like everything else: the dot is legible by
+     being there at all, and a lone green pip in a monotone interface is a
+     decoration pretending to be information. */
+  --ok: #73716a;
+
+  /* Every input, textarea and inset control, whatever surface it sits on:
+     white inside a panel, white inside a card, always with a --border-strong
+     edge to define it. One token so a field can't read as a different
+     material in two places. */
+  --field: #ffffff;
+
+  /* Anything the app dims the page behind: the phone drawer, a dialog, the
+     image lightbox. Was three different blacks. */
+  --scrim: rgb(0 0 0 / 0.4);
+  /* The image lightbox dims harder than a dialog does — the photo is the
+     only thing meant to be legible. */
+  --scrim-strong: rgb(0 0 0 / 0.78);
+  /* Chrome that sits *on* a scrim (the lightbox's close button). Identical
+     in both themes on purpose: it's always light-on-dark, whatever the app
+     around it is doing. */
+  --overlay-chip: rgb(255 255 255 / 0.14);
+  --overlay-chip-hover: rgb(255 255 255 / 0.26);
+  --overlay-fg: rgb(255 255 255 / 0.85);
+
+  /* Three elevations, in one place. Light mode carries them with a real
+     shadow; the dark values below lean on a lighter border instead, since a
+     black shadow over a black background lifts nothing. */
+  --shadow-card: 0 1px 3px rgb(0 0 0 / 0.04);
+  --shadow-pop: 0 8px 30px rgb(0 0 0 / 0.12);
+  --shadow-modal: 0 20px 60px rgb(0 0 0 / 0.25);
 }
 
-/* True black — OLED. --bg is pure #000 (actual black pixels off on an OLED
-   panel); everything above it is a step of grey so panels/cards still read
-   as distinct surfaces against it, same layering the old slate theme had,
-   just re-based off black instead of charcoal. Text goes correspondingly
-   brighter, since near-white reads as low-contrast/grey against true black
-   in a way it didn't against the old lighter background. */
+/* Warm charcoal, not black.
+   The light theme is paper; this is the same paper at night, not a
+   different material — the greys keep their yellow, and "accent" inverts
+   to paper-on-ink rather than becoming a hue. Deliberately not pure
+   #000: an OLED-black page under warm text reads as a hole in the screen,
+   and every surface above it has to fight to look like a surface. */
 .dark {
-  --bg: #000000;
-  --panel: #0d0d0d;
-  --panel-2: #161616;
-  --raised: #131313;
-  --border: #232323;
-  --border-strong: #333333;
-  --text: #f5f5f5;
-  --text-soft: #d8d8d8;
-  --muted: #9a9a9a;
-  --faint: #6b6b6b;
-  --hover: #1a1a1a;
-  --active: #262626;
-  --focus: #4a4a4a;
+  --bg: #1f1e1d;
+  --panel: #262624;
+  --panel-2: #2e2d2b;
+  --raised: #2a2927;
+  --border: #3a3937;
+  --border-strong: #4a4845;
+  --text: #f5f4ee;
+  --text-soft: #d5d3cb;
+  --muted: #a19e95;
+  --faint: #78756d;
+  --hover: #32312e;
+  --active: #3c3a37;
+  --focus: #7d7a72;
+
+  --accent: #f5f4ee;
+  --accent-hover: #ffffff;
+  --accent-fg: #1f1e1d;
+  --accent-soft: #3c3a37;
   --danger: #e0837c;
   --danger-bg: #170d0c;
   --danger-border: #3a201e;
+  --ok: #a19e95;
+
+  --field: #1a1a1a;
+  /* Heavier than light mode's: the page underneath is already near-black,
+     so a 40% veil barely separates the layers. */
+  --scrim: rgb(0 0 0 / 0.65);
+  --scrim-strong: rgb(0 0 0 / 0.85);
+
+  /* Blacker and deeper, plus a hairline of light around the edge — on an
+     OLED background the ring is what actually reads as "in front". */
+  --shadow-card: 0 1px 3px rgb(0 0 0 / 0.5);
+  --shadow-pop: 0 8px 30px rgb(0 0 0 / 0.7), 0 0 0 1px rgb(255 255 255 / 0.04);
+  --shadow-modal: 0 24px 70px rgb(0 0 0 / 0.8), 0 0 0 1px rgb(255 255 255 / 0.05);
 }
 
 @theme inline {
@@ -142,7 +227,8 @@
    literal size, but nothing changes for desktop until the mobile media
    query below overrides them. */
 :root {
-  --fs-xs: 11.5px; /* "Recents" label */
+  --fs-label: 10.5px; /* the .ui-label register — section heads, attribution */
+  --fs-xs: 11.5px; /* search hints, snippets */
   --fs-sm: 13px; /* search input, empty-list hint */
   --fs-sm2: 13.5px; /* chat list rows */
   --fs-meta: 12.5px; /* message timestamp row, reasoning toggle + content */
@@ -265,10 +351,67 @@ th,
   letter-spacing: -0.01em;
 }
 
-/* The wordmark and the empty-state line — the only serif in the app. */
+/* The utility register.
+ *
+ * Three voices, and this is the third: the serif for the wordmark, the sans
+ * for everything a person wrote, and this for everything the *system* says
+ * about it — which model produced an answer, how long a document is, what
+ * state something is in. Small, quiet, sentence case, never longer than a
+ * few words. Size and colour are enough to mark it as metadata; upper case
+ * on top of that was the interface raising its voice to say something
+ * unimportant.
+ */
+.ui-label {
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The two places the serif appears, and the difference between them: the
+   wordmark is italic because a logotype can be; the greeting is upright
+   because it's a sentence someone reads. */
 .wordmark {
   font-family: var(--font-serif);
   font-style: italic;
+}
+
+.display {
+  font-family: var(--font-serif);
+  letter-spacing: -0.01em;
+}
+
+/* The transcript has two voices in it, so it's set in two faces: what the
+   model says is serif, what you said is the sans you typed it in. It makes
+   a page you can skim and know who is speaking without reading a word — and
+   it costs nothing, because the split is already there in the content.
+
+   Playfair is a display face with a lot of stroke contrast, which is
+   punishing at body sizes if you leave it alone: the size goes up a little,
+   the lines get more air, and the weight comes down to 400 so the thicks
+   don't clot. Code, tables and keyboard text opt back out — a monospace
+   sample set in a Didone is nobody's idea of legible. */
+.answer {
+  font-family: var(--font-serif);
+  font-size: calc(var(--fs-body) + 1px);
+  line-height: 1.8;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+.answer code,
+.answer pre,
+.answer kbd,
+.answer samp,
+.answer table {
+  font-family: var(--font-mono, ui-monospace, "SF Mono", Menlo, monospace);
+}
+
+.answer table,
+.answer th,
+.answer td {
+  font-family: var(--font-sans);
+  font-size: var(--fs-sm2);
 }
 
 /* Toggling the theme swaps every CSS variable in one frame, so anything

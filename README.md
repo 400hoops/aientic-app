@@ -152,6 +152,7 @@ on each device — see "A trusted cert without a public domain" below), add
 | `AIENTIC_TLS_CERT`, `AIENTIC_TLS_KEY` | unset (plain HTTP) | PEM cert/key paths — set both to serve HTTPS directly |
 | `AIENTIC_SECURE_COOKIES` | `off` | `Secure` attribute on the session cookie: `off` (works with self-signed / bare-IP setups), `auto` (set when the connection is TLS — correct once every client trusts the cert), `on` (always) |
 | `AIENTIC_TRUST_PROXY` | unset (no proxies trusted) | Set behind a reverse proxy so `X-Forwarded-*` is honoured: `1` for one proxy hop, or `loopback` / a CIDR / a list. Off by default on purpose: without it, a direct client's `X-Forwarded-For` would let anyone spoof `req.ip` and walk past the login rate limit |
+| `AIENTIC_ALLOW_PRIVATE_FETCH` | unset (public addresses only) | Lets the link reader fetch addresses inside your own network — an intranet wiki, a homelab dashboard. Off by default: with it on, anyone who can sign in can have the server fetch your router's admin page and read the reply back on screen |
 | `AIENTIC_FIRST_RESPONSE_TIMEOUT_MS` | `120000` | How long to wait for a model server to start responding before a run is failed with an error. Model loading and long-context prefill both happen before the first byte, so the default is generous; raise it for very large models loading on demand, or set `0` to disable the watchdog entirely |
 
 ## How it stores things
@@ -173,6 +174,142 @@ whatever — and is hashed to the actual key unless it is exactly 16, 24 or
 32 bytes, in which case those bytes are the key. Either way the keys are
 never sent to the browser — the model picker only ever sees a label and a
 note.
+
+Each conversation is also mirrored to its own pair of files under
+`data/chats/`, named by date, title and id:
+
+```
+data/chats/2025-06-01-a-question-about-mice-mtj2wm.json
+data/chats/2025-06-01-a-question-about-mice-mtj2wm.md
+```
+
+The JSON is the full fidelity copy (roles, reasoning, attachments,
+timestamps); the `.md` is the same chat as readable Markdown with YAML front
+matter. Both are rewritten whenever the chat changes and deleted with it, and
+the directory is rebuilt from `data.json` at startup, so it can be safely
+thrown away. Nothing reads them back except the importer, which means
+`data.json` is still the only source of truth. The download icon on a chat in
+the sidebar hands you the Markdown; `/api/conversations/:id/export?format=json`
+gives the JSON.
+
+## Settings, and what lives where
+
+The sidebar holds the two ways to start a conversation and the history
+itself; everything you configure lives behind your name at the bottom.
+**Settings** covers your username and password, the model new chats start
+on, memory, skills, the theme, and importing history. **Admin** — accounts
+and model endpoints — and the sampler are admin-only: they're absent from
+the menu for a normal account, a typed `/admin` sends it back to the chat,
+and every `/api/admin` route refuses it server-side regardless.
+
+Chats can be pinned from the `…` on their row, which gives them their own
+section above Recents. Pinning deliberately doesn't touch the chat's
+updated time, so a pinned chat doesn't jump around when you use it.
+
+## Pasting a link, or an article
+
+Paste a link on its own and the server fetches the page, pulls the article
+out of it, and attaches it to your turn — titled with the page's own title,
+counted in words, and linked, so "what does this say?" works on something
+the model can actually see. A link inside a sentence is left alone: you're
+mid-thought, not asking for a fetch.
+
+Paste more than a few hundred words and the same thing happens without the
+fetch: the text becomes an attachment rather than filling the box. Dropping
+a `.txt`, `.md`, `.csv` or `.log` on the composer does it too, and the `+`
+takes documents on any model, not just one that can see photos.
+
+Either way it reaches the model fenced in a `<document>` tag (with the URL,
+when there is one) and your question after it. Without the fence a long
+paste is reliably answered as though the article had asked the question.
+
+**What the link reader will not fetch.** It is the one thing here that makes
+the server open a connection to an address someone typed, and the server
+usually sits on a home network full of things that answer without asking who
+is calling. So: `http(s)` only, every hostname resolved *before* connecting
+and refused if any of its addresses is private, loopback, link-local or
+carrier-grade NAT, every redirect re-checked the same way, a 12-second
+timeout, a 3 MB cap, and HTML or text only. `AIENTIC_ALLOW_PRIVATE_FETCH=1`
+turns the address rule off, for reading an intranet wiki or a homelab
+dashboard — only sensible on a server whose accounts you all trust, since
+with it on anyone signed in can have the server fetch your router's admin
+page and show them the reply.
+
+## Knowledge, and how retrieval works here
+
+Settings → **Knowledge** is a library of documents any conversation can look
+things up in: add a page by link, drop `.txt`/`.md`/`.csv` files, or paste
+text. Turn it on for a conversation with the library button in the composer
+— it's off by default and sticky once set — and every question you ask is
+used to pull the handful of passages that bear on it into that turn. The
+answer lists the documents it drew on.
+
+Retrieval is **BM25 over the text**, not embeddings, and that's a trade
+rather than a shortcut. Embeddings would need a second model loaded and
+reachable at all times, competing for VRAM with the one you actually chat
+to, plus a re-index of everything whenever it changes. Keyword search needs
+nothing but the text, is exact about names, numbers and error codes — which
+is most of what anyone searches their own notes for — and can show its
+working: `GET /api/knowledge/search?q=…` returns exactly what a question
+would retrieve, with scores, so a missing answer can be diagnosed as "never
+retrieved" or "retrieved and ignored" rather than guessed at.
+
+What it can't do is match a paraphrase with no words in common. Two things
+soften that: light stemming, so "how do I descale it" finds a handbook that
+says "descaling"; and the passages go to the model framed as *material to
+check*, explicitly allowed to be irrelevant, so an off-target retrieval
+produces a normal answer rather than a confident wrong one.
+
+Documents are chunked on paragraph boundaries (~900 characters, with
+overlap) so a retrieved passage is a thought rather than a slice of one, and
+no more than three passages come from any one document — three from the
+wrong file and none from the right one is the classic failure.
+
+## Tests
+
+```bash
+npx playwright install chromium   # once
+npm run test:e2e
+```
+
+End-to-end only, and against what ships: the real Express server, the real
+production build, a real browser. The only thing faked is the model —
+`tests/stub-model.mjs` is an OpenAI-compatible endpoint that answers
+instantly and reports what it was asked, which is how the suite proves a
+pasted article actually reached the model rather than merely appearing on
+screen. The server runs against a throwaway data directory under the OS temp
+dir, so a test run can't touch your own history.
+
+The browser is cut off from the internet for the duration (`tests/e2e/test.js`)
+— the app pulls its webfonts from Google, and a machine that can't reach them
+would otherwise fail on navigation timeouts that have nothing to do with the
+app. Set `CHROMIUM_PATH` to use a system Chromium instead of Playwright's own.
+
+## Importing from Claude
+
+**Import chats** in the sidebar takes a Claude data export — the zip that
+Anthropic mails you after Settings → Privacy → Export data, or just the
+`conversations.json` from inside it. You can also drop the file straight onto
+the composer, or paste it there. Every conversation with at least one message
+becomes a chat on your account, keeping its title, order and timestamps;
+thinking blocks become reasoning, attachments keep their extracted text, and
+tool calls are rendered as JSON blocks. Imported chats have no model of their
+own — carrying one on picks up whatever is configured now. Ids are freshly
+minted, so importing the same export twice makes a second copy rather than
+overwriting anything. Files this app itself wrote to `data/chats/` can be
+imported back the same way.
+
+## The palette
+
+Warm paper rather than white — every grey has a little yellow in it, which
+is what makes an hour of reading comfortable — and beyond that, one tone.
+No accent hue: "the thing you press" and "the thing you're on" are marked
+by weight and contrast, not colour. The only hue left is the danger state,
+because an error that reads as ordinary text isn't one.
+
+All of it lives in `src/index.css`, which also documents which token belongs
+on which surface. No component carries a colour of its own: there is no
+`#hex`, `rgba()` or Tailwind palette class anywhere in `src/*.jsx`.
 
 ## Security posture
 

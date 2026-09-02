@@ -38,6 +38,9 @@ export const login = (username, password) =>
 export const setupAdmin = (username, password) =>
   request("/auth/setup", { method: "POST", body: { username, password } });
 export const logout = () => request("/auth/logout", { method: "POST" });
+/** Your own username and password. Both need the current password. */
+export const updateAccount = (patch) =>
+  request("/account", { method: "PATCH", body: patch });
 
 /* ---------- models ------------------------------------------------------- */
 
@@ -49,21 +52,94 @@ export const getModelStatus = () => request("/models/status");
 
 export const listConversations = () => request("/conversations");
 export const getConversation = (id) => request(`/conversations/${id}`);
+/** Titles and message contents, with the line each hit matched on. */
+export const searchConversations = (q, signal) =>
+  request(`/conversations/search?q=${encodeURIComponent(q)}`, { signal });
 export const createConversation = (endpointId) =>
   request("/conversations", { method: "POST", body: { endpointId } });
 export const renameConversation = (id, title) =>
   request(`/conversations/${id}`, { method: "PATCH", body: { title } });
+/** Pin a chat to the top of the sidebar (or unpin it). */
+export const pinConversation = (id, pinned) =>
+  request(`/conversations/${id}`, { method: "PATCH", body: { pinned } });
 export const deleteConversation = (id) =>
   request(`/conversations/${id}`, { method: "DELETE" });
 export const deleteMessage = (conversationId, messageId) =>
   request(`/conversations/${conversationId}/messages/${messageId}`, {
     method: "DELETE",
   });
-export const editMessage = (conversationId, messageId, content) =>
+/**
+ * Edit a turn: new text, and the attachments it keeps. `images` is the
+ * surviving subset of what the message already had — the server won't
+ * accept new ones here.
+ */
+export const editMessage = (conversationId, messageId, content, images) =>
   request(`/conversations/${conversationId}/messages/${messageId}`, {
     method: "PATCH",
-    body: { content, truncate: true },
+    body: { content, images, truncate: true },
   });
+
+/**
+ * A Claude data export — the zip, or the conversations.json inside it —
+ * sent as raw bytes rather than JSON, so a large archive isn't inflated by
+ * a third on the way up.
+ */
+export async function importChats(file) {
+  const res = await fetch("/api/conversations/import", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/octet-stream" },
+    body: file,
+  });
+  const payload = await res.json().catch(() => null);
+  if (!res.ok)
+    throw new Error(payload?.error || `Import failed (${res.status})`);
+  return payload;
+}
+
+/** Download one chat as Markdown or JSON. */
+export const exportChatUrl = (id, format = "md") =>
+  `/api/conversations/${id}/export?format=${format}`;
+
+/**
+ * Fetch a link and get its article back, to attach to a turn. The server
+ * does the fetching — see server/readpage.js for why, and for what it
+ * refuses to fetch.
+ */
+export const readUrl = (url, signal) =>
+  request("/read-url", { method: "POST", body: { url }, signal });
+
+/* ---------- knowledge ---------------------------------------------------- */
+
+export const listKnowledge = () => request("/knowledge");
+/** Either { title, text } or { url } — a link is fetched and read server-side. */
+export const addKnowledge = (document) =>
+  request("/knowledge", { method: "POST", body: document });
+export const removeKnowledge = (id) =>
+  request(`/knowledge/${id}`, { method: "DELETE" });
+/** What a question would retrieve, with no model involved. */
+export const searchKnowledge = (q) =>
+  request(`/knowledge/search?q=${encodeURIComponent(q)}`);
+
+/* ---------- skills ------------------------------------------------------- */
+
+export const listSkills = () => request("/skills");
+export const addSkill = (skill) =>
+  request("/skills", { method: "POST", body: skill });
+export const editSkill = (id, patch) =>
+  request(`/skills/${id}`, { method: "PATCH", body: patch });
+export const removeSkill = (id) =>
+  request(`/skills/${id}`, { method: "DELETE" });
+
+/* ---------- memory ------------------------------------------------------- */
+
+export const listMemories = () => request("/memories");
+export const addMemory = (text) =>
+  request("/memories", { method: "POST", body: { text } });
+export const editMemory = (id, text) =>
+  request(`/memories/${id}`, { method: "PATCH", body: { text } });
+export const removeMemory = (id) =>
+  request(`/memories/${id}`, { method: "DELETE" });
 
 /* ---------- admin -------------------------------------------------------- */
 
@@ -147,7 +223,16 @@ async function readSse(res, handlers) {
 
 export async function streamTurn(
   conversationId,
-  { content, endpointId, regenerate = false, images, signal },
+  {
+    content,
+    endpointId,
+    regenerate = false,
+    images,
+    attachments,
+    skillIds,
+    useKnowledge,
+    signal,
+  },
   handlers = {},
 ) {
   const res = await fetch(`/api/conversations/${conversationId}/stream`, {
@@ -159,6 +244,9 @@ export async function streamTurn(
       endpointId,
       regenerate,
       images,
+      attachments,
+      skillIds,
+      useKnowledge,
       // Where the user is, so {{CURRENT_WEEKDAY}} / {{CURRENT_DATETIME}} /
       // {{CURRENT_TIMEZONE}} resolve to their clock, not the server's.
       timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
@@ -192,6 +280,41 @@ export async function attachStream(conversationId, { signal }, handlers = {}) {
 
   await readSse(res, handlers);
   return true;
+}
+
+/**
+ * A private turn: the whole exchange goes up with the request and nothing
+ * comes back to a conversation id, because there isn't one. See
+ * /api/private/stream — the server keeps none of it.
+ */
+export async function streamPrivateTurn(
+  { messages, endpointId, skillIds, useKnowledge, signal },
+  handlers = {},
+) {
+  const res = await fetch("/api/private/stream", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      messages,
+      endpointId,
+      skillIds,
+      useKnowledge,
+      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    }),
+    signal,
+  });
+
+  if (!res.ok || !res.body) {
+    let message = `Request failed (${res.status})`;
+    try {
+      message = (await res.json())?.error || message;
+    } catch {
+      /* not JSON */
+    }
+    throw new Error(message);
+  }
+  await readSse(res, handlers);
 }
 
 /** Explicitly cancel a run; merely disconnecting no longer stops one. */

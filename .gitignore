@@ -3,3 +3,8 @@ dist
 server/data
 *.log
 .DS_Store
+
+# Playwright
+/test-results/
+/playwright-report/
+/tests/.auth/

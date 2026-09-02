@@ -8,6 +8,7 @@ import {
 } from "./theme.js";
 import { readPref, writePref } from "./cookies.js";
 import LoginPage from "./LoginPage.jsx";
+import SettingsDialog from "./SettingsDialog.jsx";
 import Sidebar from "./Sidebar.jsx";
 import AienticChatShell from "./AienticChatShell.jsx";
 import SamplerPage from "./SamplerPage.jsx";
@@ -37,12 +38,17 @@ const parseRoute = (pathname) => {
   const chat = pathname.match(/^\/chat\/([^/]+)\/?$/);
   if (chat) return { view: "chat", activeId: chat[1] };
   if (pathname === "/new") return { view: "chat", activeId: null };
+  // /private is a route so a reload lands back in a private chat rather
+  // than a saved one — the transcript is gone either way, but the mode
+  // shouldn't silently flip to the one that writes things down.
+  if (pathname === "/private") return { view: "private", activeId: null };
   if (pathname === "/sampler") return { view: "sampler", activeId: null };
   if (pathname === "/admin") return { view: "admin", activeId: null };
   return { view: "chat", activeId: null };
 };
 
 const routePath = (view, activeId) => {
+  if (view === "private") return "/private";
   if (view === "sampler") return "/sampler";
   if (view === "admin") return "/admin";
   return activeId ? `/chat/${activeId}` : "/new";
@@ -71,6 +77,12 @@ export default function App() {
   const [modelStatus, setModelStatus] = useState({});
   const [modelId, setModelId] = useState(() => readPref("aientic:model"));
   const [conversations, setConversations] = useState([]);
+  // Search results, which carry a snippet the plain list doesn't have.
+  const [matches, setMatches] = useState([]);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  // The last rename made from the sidebar, passed down so an open chat's
+  // header follows it.
+  const [renamed, setRenamed] = useState(null);
   const [activeId, setActiveId] = useState(initialRoute.activeId);
 
   const user = session?.user ?? null;
@@ -129,6 +141,42 @@ export default function App() {
         .catch(() => {}),
     []
   );
+
+  /**
+   * Search runs on the server, over message text as well as titles — the
+   * transcripts never all live in the browser, and the store is a scan away
+   * from answering this anyway. Debounced, and each keystroke aborts the
+   * request the last one left in flight.
+   */
+  useEffect(() => {
+    const q = filter.trim();
+    if (!q) {
+      setMatches([]);
+      return;
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      api
+        .searchConversations(q, controller.signal)
+        .then((res) => setMatches(res.conversations))
+        .catch(() => {});
+    }, 160);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [filter]);
+
+  /**
+   * A Claude data export, uploaded from the sidebar or dropped on the
+   * composer. The server answers with the new history, so the list updates
+   * without a second round trip.
+   */
+  const importChats = useCallback(async (file) => {
+    const result = await api.importChats(file);
+    setConversations(result.conversations);
+    return result;
+  }, []);
 
   const refreshModels = useCallback(
     () =>
@@ -247,10 +295,25 @@ export default function App() {
     }
   }, [user, session]);
 
+  // Admin and the sampler are admin-only everywhere they can be reached
+  // from: the account menu doesn't offer them, the settings pane doesn't
+  // show the sampler, and a normal account that types /admin — or returns
+  // to a bookmark from when it *was* an admin — is sent back to the chat,
+  // URL and all, so a refresh doesn't land there again. The server refuses
+  // every /api/admin route on its own; this is the UI half of the same rule.
+  const adminOnly = view === "sampler" || view === "admin";
+  useEffect(() => {
+    if (adminOnly && user && user.role !== "admin") setView("chat");
+  }, [adminOnly, user]);
+
   const closeOnPhone = () => isNarrowViewport() && setSidebarOpen(false);
 
-  const openChat = (id) => {
+  // messageId is set when the row came from a search result: the chat opens
+  // scrolled to the line that matched rather than at its end.
+  const [highlightMessage, setHighlightMessage] = useState(null);
+  const openChat = (id, messageId = null) => {
     setActiveId(id);
+    setHighlightMessage(messageId ? { conversationId: id, messageId } : null);
     setView("chat");
     closeOnPhone();
   };
@@ -261,15 +324,50 @@ export default function App() {
     closeOnPhone();
   };
 
+  // A chat the server never stores. Leaving the view is what deletes it,
+  // so the id is cleared on the way in and the shell starts empty.
+  const privateChat = () => {
+    setActiveId(null);
+    setView("private");
+    closeOnPhone();
+  };
+
   const navigate = (next) => {
     setView(next);
     closeOnPhone();
   };
 
+  const renameConversation = async (convo) => {
+    const title = window.prompt("Rename chat", convo.title);
+    if (title === null) return;
+    const next = title.trim();
+    if (!next || next === convo.title) return;
+    setConversations((prev) =>
+      prev.map((c) => (c.id === convo.id ? { ...c, title: next } : c))
+    );
+    // Bumped so the open chat picks the new title up in its header — the
+    // shell holds its own copy of the conversation, and the sidebar row
+    // changing underneath it isn't something it can see.
+    setRenamed({ id: convo.id, title: next });
+    await api.renameConversation(convo.id, next).catch(() => refreshConversations());
+  };
+
+  const pinChat = async (convo, pinned) => {
+    setConversations((prev) =>
+      prev.map((c) => (c.id === convo.id ? { ...c, pinned } : c))
+    );
+    await api.pinConversation(convo.id, pinned).catch(() => refreshConversations());
+  };
+
   const removeConversation = async (id) => {
     await api.deleteConversation(id).catch(() => {});
     setConversations((prev) => prev.filter((c) => c.id !== id));
-    if (id === activeId) setActiveId(null);
+    // Functional, not `if (id === activeId)`: this handler is also held by
+    // the chat shell, which can be running a copy from before the chat it
+    // is deleting even existed — that closure's activeId is stale, and the
+    // comparison silently failed, leaving the app pointed at a chat that
+    // was gone.
+    setActiveId((current) => (current === id ? null : current));
   };
 
   const signOut = async () => {
@@ -295,18 +393,10 @@ export default function App() {
     );
   }
 
-  // Sampler and Admin don't exist for non-admins — a typed URL, a stale
-  // bookmark, or a live demotion shouldn't leave them on a blank pane.
   const effectiveView =
-    (view === "sampler" || view === "admin") && user.role !== "admin"
-      ? "chat"
-      : view;
+    adminOnly && user?.role !== "admin" ? "chat" : view;
 
-  const visible = filter.trim()
-    ? conversations.filter((c) =>
-        c.title.toLowerCase().includes(filter.trim().toLowerCase())
-      )
-    : conversations;
+  const visible = filter.trim() ? matches : conversations;
 
   const sidebar = (
     <Sidebar
@@ -318,8 +408,12 @@ export default function App() {
       theme={theme}
       onFilter={setFilter}
       onNewChat={newChat}
+      onImport={importChats}
+      onOpenSettings={() => setSettingsOpen(true)}
       onOpen={openChat}
       onDelete={removeConversation}
+      onRename={renameConversation}
+      onPin={pinChat}
       onNavigate={navigate}
       onToggleTheme={onToggleTheme}
       onSignOut={signOut}
@@ -327,8 +421,24 @@ export default function App() {
     />
   );
 
+  const settings = settingsOpen && (
+    <SettingsDialog
+      user={user}
+      models={models}
+      modelId={modelId}
+      theme={theme}
+      onModelChange={setModelId}
+      onToggleTheme={onToggleTheme}
+      onImport={importChats}
+      onNavigate={navigate}
+      onUserChanged={(next) => setSession((prev) => ({ ...prev, user: next }))}
+      onClose={() => setSettingsOpen(false)}
+    />
+  );
+
   return (
     <div className="flex h-full animate-fade-in bg-[var(--bg)] text-[var(--text)] antialiased">
+      {settings}
       {/* Desktop: the sidebar takes space in the row, so showing/hiding it
           has to animate that space rather than just the sidebar itself —
           the outer wrapper's width slides between 0 and 268px with the
@@ -350,7 +460,7 @@ export default function App() {
         <div
           onClick={() => setSidebarOpen(false)}
           aria-hidden="true"
-          className={`fixed inset-0 z-40 bg-black/35 transition-opacity duration-300
+          className={`fixed inset-0 z-40 bg-[var(--scrim)] transition-opacity duration-300
                       motion-reduce:transition-none
                       ${sidebarOpen ? "opacity-100" : "pointer-events-none opacity-0"}`}
         />
@@ -362,18 +472,24 @@ export default function App() {
           className={`fixed inset-y-0 left-0 z-50 w-[268px] max-w-[86vw]
                       transition-transform duration-300 ease-drawer
                       motion-reduce:transition-none
-                      ${sidebarOpen ? "translate-x-0 shadow-xl" : "-translate-x-full shadow-none"}`}
+                      ${sidebarOpen ? "translate-x-0 shadow-[var(--shadow-modal)]" : "-translate-x-full shadow-none"}`}
         >
           {sidebar}
         </div>
       </div>
 
-      {effectiveView === "chat" && (
+      {(effectiveView === "chat" || effectiveView === "private") && (
         <AienticChatShell
+          // Remounted when the mode flips, so a private transcript can
+          // never survive into a saved chat (or the other way round).
+          key={effectiveView === "private" ? "private" : "chat"}
+          privateMode={effectiveView === "private"}
           models={models}
           modelsLoaded={modelsLoaded}
           modelStatus={modelStatus}
           conversationId={activeId}
+          highlightMessage={highlightMessage}
+          renamed={renamed}
           modelId={modelId}
           onModelChange={setModelId}
           onConversationCreated={(convo) => {
@@ -391,6 +507,10 @@ export default function App() {
             )
           }
           onConversationsChanged={refreshConversations}
+          onImportChats={importChats}
+          onTogglePrivate={() =>
+            effectiveView === "private" ? newChat() : privateChat()
+          }
           onConversationDeleted={removeConversation}
           // A conversation id that will never resolve (a stale bookmark, a
           // link from before a fresh install) — nothing to delete on the

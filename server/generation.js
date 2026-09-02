@@ -11,6 +11,8 @@
  * re-attach to a run already in progress. Only an explicit stop aborts it.
  */
 import { db, save, uid } from "./storage.js";
+import { touchConversation } from "./chatFiles.js";
+import { retrieve } from "./knowledge.js";
 import {
   chatUrl,
   authHeaders,
@@ -220,8 +222,19 @@ export async function streamCompletion({
     createdAt: Date.now(),
     model: endpoint.label,
   };
+
+  // A private chat hands us a conversation that isn't in the store at all
+  // (see /api/private/stream). Streaming it is identical; writing it down
+  // is what must not happen, here or at any checkpoint below.
+  const ephemeral = !db.conversations.includes(conversation);
+  const persist = () => {
+    if (ephemeral) return;
+    save();
+    touchConversation(conversation);
+  };
+
   conversation.messages.push(assistant);
-  save();
+  persist();
 
   const gen = {
     assistant,
@@ -245,32 +258,106 @@ export async function streamCompletion({
   // content parts (text plus one image_url per photo, base64 data URLs —
   // exactly what llama-server's CLIP models decode). Text-only turns stay
   // plain strings, which is cheaper for the common case.
+  /**
+   * Attached text — a pasted article, a dropped .md — goes up ahead of the
+   * question, fenced and named. The fence matters: without it a model has
+   * no way to tell where someone else's prose ends and the actual
+   * instruction begins, and long pastes reliably end up answered as though
+   * the article had asked the question.
+   */
+  const withAttachments = (m) => {
+    if (!m.attachments?.length) return m.content || "";
+    const documents = m.attachments
+      .map((a) => {
+        const name = String(a.name).replace(/"/g, "'");
+        const from = a.url ? ` url="${String(a.url).replace(/"/g, "'")}"` : "";
+        return `<document name="${name}"${from}>\n${a.text}\n</document>`;
+      })
+      .join("\n\n");
+    // The question last: it's what the model should still be holding when
+    // it starts writing.
+    return m.content ? `${documents}\n\n${m.content}` : documents;
+  };
+
   const upstreamMessage = (m) =>
     m.role === "user" && m.images?.length
       ? {
           role: "user",
           content: [
-            ...(m.content ? [{ type: "text", text: m.content }] : []),
+            ...(withAttachments(m) ? [{ type: "text", text: withAttachments(m) }] : []),
             ...m.images.map((url) => ({
               type: "image_url",
               image_url: { url },
             })),
           ],
         }
-      : { role: m.role, content: m.content };
+      : {
+          role: m.role,
+          content: m.role === "user" ? withAttachments(m) : m.content,
+        };
 
   const messages = [];
-  if (sampler?.systemPrompt?.trim()) {
+  // The admin's prompt for this model, plus whatever this user has asked to
+  // be remembered — one system turn, memory last so it reads as context the
+  // prompt is speaking about rather than instructions competing with it.
+  const system = [];
+  if (sampler?.systemPrompt?.trim())
     // {{CURRENT_*}} / {{USER_NAME}} resolve to the real clock at send time,
     // in the sender's timezone.
-    messages.push({
-      role: "system",
-      content: expandSystemPrompt(sampler.systemPrompt, {
+    system.push(
+      expandSystemPrompt(sampler.systemPrompt, {
         userName: user?.username,
         timeZone: clientTimeZone,
-      }),
-    });
+      })
+    );
+  // Skills attached to this chat, plus any the user marked always-on.
+  const skills = user ? db.skills?.[user.id] || [] : [];
+  const attached = new Set(conversation.skillIds || []);
+  for (const skill of skills)
+    if (skill.always || attached.has(skill.id))
+      system.push(`# ${skill.name}\n\n${skill.instructions}`);
+
+  /**
+   * Retrieval: the passages from the user's library that bear on what they
+   * just asked, if they've asked for their library to be used.
+   *
+   * The instruction around them matters as much as the passages do. A model
+   * handed context with no framing treats it as ground truth and will
+   * cheerfully answer from it even when it doesn't fit the question — so
+   * this says what the passages are, that they may be irrelevant, and that
+   * saying so is a valid answer.
+   */
+  let sources = [];
+  if (conversation.useKnowledge && user) {
+    const question = [...history].reverse().find((m) => m.role === "user");
+    const found = question ? retrieve(user.id, question.content) : null;
+    if (found) {
+      sources = found.sources;
+      // Kept on the answer itself, so the transcript still shows what it
+      // drew on when it's read back tomorrow.
+      assistant.sources = sources;
+      system.push(
+        "Passages from " +
+          (user.username || "the user") +
+          "'s own documents, retrieved by keyword for this question. They " +
+          "may or may not be relevant. Use them where they answer the " +
+          "question and say so; where they don't, answer normally and don't " +
+          "pretend they did.\n\n" +
+          found.passages
+      );
+    }
   }
+
+  const memories = user ? db.memories?.[user.id] || [] : [];
+  if (memories.length)
+    system.push(
+      "Things " +
+        (user?.username || "the user") +
+        " has asked you to remember:\n" +
+        memories.map((m) => `- ${m.text}`).join("\n")
+    );
+  if (system.length)
+    messages.push({ role: "system", content: system.join("\n\n") });
   for (const m of history) messages.push(upstreamMessage(m));
 
   const split = createReasoningSplitter();
@@ -365,17 +452,24 @@ export async function streamCompletion({
         // Checkpoint occasionally so a crash mid-answer keeps most of it.
         if (Date.now() - persistAt > 2000) {
           persistAt = Date.now();
-          save();
+          persist();
         }
       }
     }
 
+    // The timestamp under an answer is when the answer *finished*, not when
+    // the placeholder was pushed — a two-minute generation stamped at its
+    // start reads as older than the question it answers.
+    assistant.createdAt = Date.now();
     conversation.updatedAt = Date.now();
-    save();
+    persist();
     sse(gen, "done", { message: assistant });
   } catch (err) {
+    // Same on the way out: a stopped or failed run keeps whatever streamed,
+    // so that partial answer is stamped when it stopped.
+    assistant.createdAt = Date.now();
     conversation.updatedAt = Date.now();
-    save();
+    persist();
 
     if (timedOut) {
       // The connect watchdog fired, not a user Stop.
@@ -383,7 +477,7 @@ export async function streamCompletion({
         conversation.messages = conversation.messages.filter(
           (m) => m.id !== assistant.id
         );
-        save();
+        persist();
       }
       sse(gen, "error", {
         message: `${endpoint.label} took too long to start responding (no reply within ${Math.round(FIRST_RESPONSE_TIMEOUT_MS / 1000)} s).`,
@@ -397,7 +491,7 @@ export async function streamCompletion({
         conversation.messages = conversation.messages.filter(
           (m) => m.id !== assistant.id
         );
-        save();
+        persist();
       }
       sse(gen, "error", { message });
     }
