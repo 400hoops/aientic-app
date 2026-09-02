@@ -247,8 +247,8 @@ export default function SettingsDialog({
             <button
               onClick={saveAccount}
               disabled={saving || !dirty || !currentPassword}
-              className="shrink-0 rounded-lg bg-[var(--text)] px-3 py-1.5 text-[length:var(--fs-sm)]
-                         text-[var(--bg)] disabled:opacity-40"
+              className="shrink-0 rounded-lg bg-[var(--accent)] px-3 py-1.5 text-[length:var(--fs-sm)]
+                         text-[var(--accent-fg)] hover:bg-[var(--accent-hover)] disabled:opacity-40"
             >
               {saving ? "Saving…" : "Save changes"}
             </button>
@@ -427,8 +427,8 @@ export default function SettingsDialog({
                 <button
                   onClick={saveSkill}
                   disabled={!skillDraft.name.trim() || !skillDraft.instructions.trim()}
-                  className="rounded-lg bg-[var(--text)] px-3 py-1.5 text-[length:var(--fs-sm)]
-                             text-[var(--bg)] disabled:opacity-40"
+                  className="rounded-lg bg-[var(--accent)] px-3 py-1.5 text-[length:var(--fs-sm)]
+                             text-[var(--accent-fg)] hover:bg-[var(--accent-hover)] disabled:opacity-40"
                 >
                   {skillDraft.id ? "Save skill" : "Add skill"}
                 </button>

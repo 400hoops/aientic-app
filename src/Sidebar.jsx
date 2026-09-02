@@ -178,7 +178,7 @@ export default function Sidebar({
                         px-2.5 py-[7px] transition-colors outline-none
                         focus-visible:ring-2 focus-visible:ring-[var(--focus)]
               ${c.id === activeId && view === "chat"
-                ? "bg-[var(--active)]"
+                ? "bg-[var(--accent-soft)] text-[var(--text)]"
                 : "hover:bg-[var(--hover)]"}`}
           >
             <span className="min-w-0 flex-1">
@@ -409,8 +409,8 @@ export default function Sidebar({
           className={`flex w-full items-center gap-2.5 rounded-lg px-1.5 py-1 transition-colors
                       hover:bg-[var(--hover)] ${menuOpen ? "bg-[var(--hover)]" : ""}`}
         >
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--text)]
-                          text-[13px] font-medium text-[var(--bg)]">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full
+                          bg-[var(--accent)] text-[13px] font-medium text-[var(--accent-fg)]">
             {initial(user.username)}
           </div>
           <div className="min-w-0 flex-1 text-left">

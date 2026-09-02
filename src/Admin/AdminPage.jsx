@@ -13,7 +13,7 @@ const field =
   "focus:border-[var(--focus)] focus:outline-none";
 const label = "mb-1.5 block text-[13px] text-[var(--text-soft)]";
 const primary =
-  "rounded-lg bg-[var(--text)] px-4 py-2.5 text-[13.5px] text-[var(--bg)] " +
+  "rounded-lg bg-[var(--accent)] px-4 py-2.5 text-[13.5px] text-[var(--accent-fg)] " +
   "transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50";
 const secondary =
   "rounded-lg border border-[var(--border-strong)] bg-[var(--raised)] px-4 py-2.5 " +

@@ -682,6 +682,21 @@ export default function AienticChatShell({
 
   /* ---------- streaming -------------------------------------------------- */
 
+  const stopAndUnqueue = () => {
+    // Whatever was waiting goes back into the composer. Draining it the
+    // instant you press Stop would be the opposite of what Stop means, and
+    // silently dropping it would lose what you typed.
+    setQueue((prev) => {
+      if (!prev.length) return prev;
+      setInput((current) =>
+        [...prev.map((q) => q.text).filter(Boolean), current].filter(Boolean).join("\n\n")
+      );
+      setImages((current) => [...prev.flatMap((q) => q.attached), ...current].slice(0, 4));
+      setDocs((current) => [...prev.flatMap((q) => q.documents), ...current].slice(0, 5));
+      return [];
+    });
+  };
+
   const stop = useCallback(() => {
     if (conversation) api.stopStream(conversation.id).catch(() => {});
   }, [conversation]);
@@ -1014,12 +1029,13 @@ export default function AienticChatShell({
   const removeImage = (id) =>
     setImages((prev) => prev.filter((img) => img.id !== id));
 
-  const send = useCallback(async () => {
-    const text = input.trim();
-    const attached = images;
-    const documents = docs.filter((d) => d.text && !d.failed);
-    // Text, photos, attached documents, or any mix — but not an empty turn.
-    // A pasted article on its own is a perfectly good question: "read this".
+  /**
+   * Send one turn: the composer's, or one that was queued while an answer
+   * was still arriving. Everything about a turn travels in the argument, so
+   * a queued one goes out through the same path as a typed one rather than
+   * through a second, subtly different one.
+   */
+  const deliver = useCallback(async ({ text, attached, documents }) => {
     if (
       (!text && !attached.length && !documents.length) ||
       streaming ||
@@ -1029,9 +1045,6 @@ export default function AienticChatShell({
       return;
     sendingRef.current = true;
     try {
-      setInput("");
-      setImages([]);
-      setDocs([]);
       let convoId = conversation?.id;
       const hadConversation = !!convoId;
 
@@ -1110,15 +1123,57 @@ export default function AienticChatShell({
   }, [
     activeModel,
     conversation,
-    docs,
-    images,
-    input,
     onConversationCreated,
     privateMode,
     run,
     skillIds,
     streaming,
   ]);
+
+  /* ---------- the queue --------------------------------------------------
+   *
+   * A question that occurs to you while the model is still answering the
+   * last one shouldn't have to wait in your head. Enter queues it, the
+   * queue drains itself when the answer lands, and the composer is free
+   * again immediately.
+   */
+  const [queue, setQueue] = useState([]);
+
+  const compose = () => ({
+    text: input.trim(),
+    attached: images,
+    documents: docs.filter((d) => d.text && !d.failed),
+  });
+
+  const clearComposer = () => {
+    setInput("");
+    setImages([]);
+    setDocs([]);
+  };
+
+  const send = useCallback(() => {
+    const turn = compose();
+    if (!turn.text && !turn.attached.length && !turn.documents.length) return;
+
+    if (streaming) {
+      setQueue((prev) => [...prev, { ...turn, id: `q-${Date.now()}` }]);
+      clearComposer();
+      return;
+    }
+    clearComposer();
+    deliver(turn);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deliver, docs, images, input, streaming]);
+
+  // Drain: one turn per run, and only when a run has genuinely finished.
+  useEffect(() => {
+    if (streaming || !queue.length || sendingRef.current) return;
+    const [next, ...rest] = queue;
+    setQueue(rest);
+    deliver(next);
+  }, [streaming, queue, deliver]);
+
+  const unqueue = (id) => setQueue((prev) => prev.filter((q) => q.id !== id));
 
   const regenerate = useCallback(async () => {
     if (!conversation || streaming || !activeModel || sendingRef.current) return;
@@ -1553,7 +1608,7 @@ export default function AienticChatShell({
                             onMouseDown={(e) => e.preventDefault()}
                             onClick={submitEdit}
                             disabled={!editing.text.trim() && !editing.images.length}
-                            className="rounded-lg bg-[var(--text)] px-3 py-1.5 text-[var(--bg)]
+                            className="rounded-lg bg-[var(--accent)] px-3 py-1.5 text-[var(--accent-fg)]
                                        disabled:opacity-40"
                           >
                             Save
@@ -1651,7 +1706,7 @@ export default function AienticChatShell({
                       role="status"
                       aria-label="Thinking"
                       className="ml-0.5 inline-block h-[1.05em] w-[2px] translate-y-[3px]
-                                   animate-caret bg-[var(--muted)]"
+                                   animate-caret bg-[var(--accent)]"
                     />
                   )}
                   <MessageActions
@@ -1751,7 +1806,11 @@ export default function AienticChatShell({
                 onKeyDown={onKeyDown}
                 onPaste={onPaste}
                 rows={1}
-                placeholder={`Message ${activeModel?.label ?? "…"}`}
+                placeholder={
+                  streaming
+                    ? "Queue for after this turn…"
+                    : `Message ${activeModel?.label ?? "…"}`
+                }
                 className="w-full resize-none bg-transparent px-2 py-1.5 text-[length:var(--fs-md)] leading-[1.6]
                          text-[var(--text)] placeholder:text-[var(--faint)] focus:outline-none"
               />
@@ -1793,6 +1852,30 @@ export default function AienticChatShell({
                   {notice}
                 </p>
               )}
+
+              {/* Waiting their turn. Shown above everything else in the
+                  card because they're already sent as far as the reader is
+                  concerned — the composer below is the next thing after
+                  these. */}
+              {queue.map((item) => (
+                <div
+                  key={item.id}
+                  className="flex animate-scale-in items-center gap-2 px-1 pt-2"
+                >
+                  <span className="ui-label shrink-0">Queued</span>
+                  <span className="min-w-0 flex-1 truncate text-[length:var(--fs-sm2)] text-[var(--muted)]">
+                    {item.text ||
+                      `${item.documents.length + item.attached.length} attachment(s)`}
+                  </span>
+                  <button
+                    onClick={() => unqueue(item.id)}
+                    title="Remove from the queue"
+                    className="shrink-0 rounded p-0.5 text-[var(--muted)] hover:text-[var(--text)]"
+                  >
+                    <IconX className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ))}
 
               {/* Documents attached to this turn. A pasted article shows
                   what it is and how long it is — the two things you need to
@@ -1982,9 +2065,12 @@ export default function AienticChatShell({
 
                 {streaming ? (
                   <button
-                    onClick={stop}
+                    onClick={() => {
+                      stopAndUnqueue();
+                      stop();
+                    }}
                     title="Stop generating"
-                    className="rounded-lg bg-[var(--text)] p-2 text-[var(--bg)]
+                    className="rounded-lg bg-[var(--accent)] p-2 text-[var(--accent-fg)]
                                transition-transform duration-150 active:scale-95"
                   >
                     <IconStop className="h-4 w-4" />
@@ -1992,13 +2078,15 @@ export default function AienticChatShell({
                 ) : (
                   <button
                     onClick={send}
-                    disabled={(!input.trim() && images.length === 0) || !activeModel}
+                    disabled={
+                      (!input.trim() && !images.length && !docs.length) || !activeModel
+                    }
                     title="Send"
-                    className="rounded-lg bg-[var(--text)] p-2 text-[var(--bg)]
+                    className="rounded-lg bg-[var(--accent)] p-2 text-[var(--accent-fg)]
                              transition-[background-color,opacity,scale] duration-150
-                             active:scale-95 hover:opacity-90 disabled:cursor-not-allowed
-                             disabled:bg-[var(--border)] disabled:text-[var(--muted)]
-                             disabled:active:scale-100"
+                             active:scale-95 hover:bg-[var(--accent-hover)]
+                             disabled:cursor-not-allowed disabled:bg-[var(--border)]
+                             disabled:text-[var(--muted)] disabled:active:scale-100"
                   >
                     <IconArrowUp className="h-4 w-4" />
                   </button>

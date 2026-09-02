@@ -61,3 +61,46 @@ test.describe("a conversation", () => {
     await expect(page.getByText("Short answer.").first()).toBeVisible();
   });
 });
+
+test.describe("the queue", () => {
+  test("messages typed mid-answer are queued and sent in order", async ({ page }) => {
+    await page.goto("/new");
+    const composer = page.locator("textarea").first();
+
+    // A long answer, so there's time to type behind it.
+    await composer.click();
+    await composer.fill("Give me the LONG one");
+    await page.keyboard.press("Enter");
+
+    await expect(composer).toHaveAttribute("placeholder", /Queue/i);
+    await composer.fill("second question");
+    await page.keyboard.press("Enter");
+    await composer.fill("third question");
+    await page.keyboard.press("Enter");
+    await expect(page.getByText("Queued")).toHaveCount(2);
+
+    // Both drain, in the order they were typed, once the answer lands.
+    await expect(page.getByText("Queued")).toHaveCount(0, { timeout: 30_000 });
+    const turns = await page.locator("[data-message-id]").allTextContents();
+    const asked = turns.filter((t) => /question|LONG/.test(t));
+    expect(asked[0]).toContain("LONG");
+    expect(asked[1]).toContain("second");
+    expect(asked[2]).toContain("third");
+  });
+
+  test("stopping hands the queue back to the composer", async ({ page }) => {
+    await page.goto("/new");
+    const composer = page.locator("textarea").first();
+    await composer.click();
+    await composer.fill("Give me the LONG one");
+    await page.keyboard.press("Enter");
+
+    await composer.fill("this should come back");
+    await page.keyboard.press("Enter");
+    await expect(page.getByText("Queued")).toHaveCount(1);
+
+    await page.getByRole("button", { name: "Stop generating" }).click();
+    await expect(page.getByText("Queued")).toHaveCount(0);
+    await expect(composer).toHaveValue(/this should come back/);
+  });
+});

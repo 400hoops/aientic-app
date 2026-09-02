@@ -25,21 +25,33 @@
      --danger*     failure states only; --ok, the one green (a loaded model)
      --scrim*      the veil behind a drawer, dialog or the lightbox
      --shadow-*    card / pop / modal elevation, never an ad-hoc shadow */
-/* Plain grayscale — no warm tint. */
+/* Warm paper, not white.
+ *
+ * Every grey here has a little yellow in it — the page is a sheet of paper
+ * rather than a lit panel, which is what keeps a long transcript readable
+ * for an hour at a time. One colour breaks the neutral: a terracotta that
+ * marks the thing you press and the thing you're on, and appears nowhere
+ * else. Restraint is what makes a single accent read as deliberate. */
 :root {
-  --bg: #ffffff;
-  --panel: #f4f4f4;
-  --panel-2: #ececec;
+  --bg: #faf9f5;
+  --panel: #f2f0e9;
+  --panel-2: #eae7dd;
   --raised: #ffffff;
-  --border: #e2e2e2;
-  --border-strong: #d4d4d4;
-  --text: #000000;
-  --text-soft: #333333;
-  --muted: #737373;
-  --faint: #a3a3a3;
-  --hover: #ececec;
-  --active: #e0e0e0;
-  --focus: #b5b5b5;
+  --border: #e6e3d8;
+  --border-strong: #d8d4c6;
+  --text: #191917;
+  --text-soft: #3d3d39;
+  --muted: #73716a;
+  --faint: #a5a29a;
+  --hover: #ebe8df;
+  --active: #e3dfd3;
+  --focus: #c96442;
+
+  /* The accent: send, primary actions, focus, the streaming caret. */
+  --accent: #c96442;
+  --accent-hover: #b5573a;
+  --accent-fg: #ffffff;
+  --accent-soft: #f6ece7;
   --danger: #9a3f36;
   --danger-bg: #f9eeec;
   --danger-border: #e2c3bf;
@@ -73,26 +85,31 @@
   --shadow-modal: 0 20px 60px rgb(0 0 0 / 0.25);
 }
 
-/* True black — OLED. --bg is pure #000 (actual black pixels off on an OLED
-   panel); everything above it is a step of grey so panels/cards still read
-   as distinct surfaces against it, same layering the old slate theme had,
-   just re-based off black instead of charcoal. Text goes correspondingly
-   brighter, since near-white reads as low-contrast/grey against true black
-   in a way it didn't against the old lighter background. */
+/* Warm charcoal, not black.
+   The light theme is paper; this is the same paper at night, not a
+   different material — the greys keep their yellow and the accent warms
+   slightly to hold its own against a dark ground. Deliberately not pure
+   #000: an OLED-black page under warm text reads as a hole in the screen,
+   and every surface above it has to fight to look like a surface. */
 .dark {
-  --bg: #000000;
-  --panel: #0d0d0d;
-  --panel-2: #161616;
-  --raised: #131313;
-  --border: #232323;
-  --border-strong: #333333;
-  --text: #f5f5f5;
-  --text-soft: #d8d8d8;
-  --muted: #9a9a9a;
-  --faint: #6b6b6b;
-  --hover: #1a1a1a;
-  --active: #262626;
-  --focus: #4a4a4a;
+  --bg: #1f1e1d;
+  --panel: #262624;
+  --panel-2: #2e2d2b;
+  --raised: #2a2927;
+  --border: #3a3937;
+  --border-strong: #4a4845;
+  --text: #f5f4ee;
+  --text-soft: #d5d3cb;
+  --muted: #a19e95;
+  --faint: #78756d;
+  --hover: #32312e;
+  --active: #3c3a37;
+  --focus: #d97757;
+
+  --accent: #d97757;
+  --accent-hover: #e08b6e;
+  --accent-fg: #1f1e1d;
+  --accent-soft: #33261f;
   --danger: #e0837c;
   --danger-bg: #170d0c;
   --danger-border: #3a201e;
@@ -112,7 +129,10 @@
 }
 
 @theme inline {
-  --font-serif: "Playfair Display", Georgia, "Times New Roman", serif;
+  /* A transitional serif with low stroke contrast — a typeface for reading,
+     not a display Didone. It carries the wordmark and the empty state, and
+     nothing else. */
+  --font-serif: "Source Serif 4", Georgia, "Times New Roman", serif;
   --font-sans: "Google Sans", "Google Sans Text", ui-sans-serif, -apple-system,
     "Segoe UI", system-ui, sans-serif;
 }

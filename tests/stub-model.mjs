@@ -42,11 +42,16 @@ export function startStubModel(port = 0) {
           ? last.content
           : JSON.stringify(last?.content ?? "");
       // The reply names what it saw, so a test can assert on it.
-      const reply = asked.includes("kettle")
-        ? "The piece is about kettles."
-        : asked.includes("<document")
-          ? "I read the document."
-          : "Short answer.";
+      // "LONG" buys the test a couple of seconds of streaming to act
+      // during — queueing a message, pressing Stop — without any sleeps.
+      const long = /LONG/.test(asked);
+      const reply = long
+        ? "A longer answer, arriving a word at a time. ".repeat(6)
+        : asked.includes("kettle")
+          ? "The piece is about kettles."
+          : asked.includes("<document")
+            ? "I read the document."
+            : "Short answer.";
 
       res.writeHead(200, { "content-type": "text/event-stream" });
       const words = reply.split(" ");
@@ -59,7 +64,7 @@ export function startStubModel(port = 0) {
         }
         const delta = { choices: [{ delta: { content: words[at++] + " " } }] };
         res.write(`data: ${JSON.stringify(delta)}\n\n`);
-      }, 5);
+      }, long ? 45 : 5);
     });
   });
 
