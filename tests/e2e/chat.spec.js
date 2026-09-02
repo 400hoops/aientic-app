@@ -75,10 +75,13 @@ test.describe("the queue", () => {
     await page.keyboard.press("Enter");
     await composer.fill("third question");
     await page.keyboard.press("Enter");
-    await expect(page.getByText("Queued")).toHaveCount(2);
+    // One chip per waiting message. Counted by their remove buttons rather
+    // than by the word "Queued", which is one shared label beside them.
+    const queued = page.getByRole("button", { name: "Remove from the queue" });
+    await expect(queued).toHaveCount(2);
 
     // Both drain, in the order they were typed, once the answer lands.
-    await expect(page.getByText("Queued")).toHaveCount(0, { timeout: 30_000 });
+    await expect(queued).toHaveCount(0, { timeout: 30_000 });
     const turns = await page.locator("[data-message-id]").allTextContents();
     const asked = turns.filter((t) => /question|LONG/.test(t));
     expect(asked[0]).toContain("LONG");

@@ -117,21 +117,22 @@ export default function Select({
       }
     }
     const a = anchor.getBoundingClientRect();
-    const cs = getComputedStyle(anchor);
-    const insetL = (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.borderLeftWidth) || 0);
-    const insetR = (parseFloat(cs.paddingRight) || 0) + (parseFloat(cs.borderRightWidth) || 0);
 
-    // matchParent spans the anchor's padding box, so its width is set here
-    // (a fixed-position element has no containing box to span); only then
-    // can the box be measured in either direction.
-    if (matchParent)
-      pop.style.width = `${Math.max(0, a.width - insetL - insetR)}px`;
+    // matchParent spans the anchor edge to edge, so its width is set here (a
+    // fixed-position element has no containing box to span); only then can
+    // the box be measured in either direction.
+    //
+    // Edge to edge, not inside the padding: it used to span the padding box,
+    // which left the menu a centimetre narrower than the composer it opens
+    // from and floating slightly inside it. Two stacked panels with almost
+    // the same edge read as a misalignment rather than a nesting.
+    if (matchParent) pop.style.width = `${a.width}px`;
     const popW = pop.offsetWidth;
     const popH = pop.offsetHeight;
 
     let left, top;
     if (matchParent) {
-      left = a.left + insetL;
+      left = a.left;
     } else if (align === "right") {
       left = a.right - popW;
     } else {

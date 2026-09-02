@@ -170,8 +170,14 @@ export default function Sidebar({
     </button>
   );
 
+  // Every group gets the same air above it, the first one included. It used
+  // to be an exception (first:pt-1), which meant Pinned sat squashed against
+  // the search box while Today floated well clear of the rows above it —
+  // two headings of the same kind spaced differently, which reads as a
+  // mistake rather than as a hierarchy. The list's own top padding is what
+  // separates the first heading from the search box now.
   const heading = (text) => (
-    <div className="px-2.5 pb-1 pt-5 text-[length:var(--fs-sm)] text-[var(--muted)] first:pt-1">
+    <div className="px-2.5 pb-1 pt-4 text-[length:var(--fs-sm)] text-[var(--muted)]">
       {text}
     </div>
   );
@@ -359,7 +365,15 @@ export default function Sidebar({
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 space-y-1 overflow-y-scroll px-2 pb-2">
+      <div
+        // scrollbar-gutter, both edges: overflow-y-scroll reserves room for
+        // the scrollbar on the right whether or not one is showing, and
+        // nothing reserves it on the left — so every row sat a scrollbar's
+        // width off centre in the column. Reserving it on both sides costs
+        // a few pixels of width and makes the list symmetrical.
+        className="min-h-0 flex-1 space-y-1 overflow-y-scroll px-2 pb-2 pt-1
+                   [scrollbar-gutter:stable_both-edges]"
+      >
         {searching ? (
           <>
             {heading("Results")}

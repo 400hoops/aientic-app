@@ -265,13 +265,19 @@ export default function AienticChatShell({
    * it's deliberately both: a menu you have to know about isn't
    * discoverable, and a menu you have to reach for isn't fast.
    *
-   * Only at the very start of the message, and only while there's no space
-   * in what you've typed. A slash mid-sentence is a slash — dates, paths and
-   * and/or all contain one, and a picker that opens over those would be a
-   * menu that interrupts writing rather than one that helps it.
+   * Only when the message *starts* with the slash. One mid-sentence is just
+   * a slash — dates, paths and and/or all contain one, and a picker that
+   * opened over those would interrupt writing rather than help it.
+   *
+   * Everything after it filters, spaces included, because skill names have
+   * spaces in them and stopping at the first one would make half of them
+   * unreachable by typing. Nothing else limits it: the menu closes as soon
+   * as nothing matches, so a message that genuinely opens with a slash —
+   * "/etc/hosts is missing" — loses it after a few letters and Enter goes
+   * back to sending.
    */
   const slashQuery = useMemo(() => {
-    const match = /^\/(\S*)$/.exec(input);
+    const match = /^\/(.*)$/s.exec(input);
     return match ? match[1].toLowerCase() : null;
   }, [input]);
 
@@ -2028,14 +2034,16 @@ export default function AienticChatShell({
             <div
               ref={setCardRef}
               {...dragProps}
-              // Filled rather than outlined, and generously rounded: the
-              // composer reads as a surface you type on instead of a form
-              // field with a box around it. The border stays for the drag
-              // state, which does need an edge to light up.
+              // A thin stroke around a generously rounded box. The fill
+              // alone left the composer floating against the page with no
+              // edge to it — at the bottom of a long transcript there was
+              // nothing marking where the reading stopped and the writing
+              // started. The outline draws that line without turning it
+              // back into a form field.
               className={`relative rounded-[32px] border bg-[var(--panel)] p-3.5
                           ${dragging
-                            ? "border-[var(--focus)] border-dashed"
-                            : "border-transparent"}`}
+                            ? "border-dashed border-[var(--focus)]"
+                            : "border-[var(--border-strong)]"}`}
             >
               {dragging && (
                 <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center
@@ -2101,25 +2109,41 @@ export default function AienticChatShell({
                   card because they're already sent as far as the reader is
                   concerned — the composer below is the next thing after
                   these. */}
-              {queue.map((item) => (
-                <div
-                  key={item.id}
-                  className="flex animate-scale-in items-center gap-2 px-1 pt-2"
-                >
-                  <span className="ui-label shrink-0">Queued</span>
-                  <span className="min-w-0 flex-1 truncate text-[length:var(--fs-sm2)] text-[var(--muted)]">
-                    {item.text ||
-                      `${item.documents.length + item.attached.length} attachment(s)`}
+              {queue.length > 0 && (
+                // Chips, not full-width rows. Each one used to stretch the
+                // whole card with its remove button pinned to the far edge,
+                // which left a hand's width of nothing between a six-letter
+                // message and the × that deletes it — and three of them
+                // stacked up read as a column of misplaced buttons. A chip
+                // is as wide as what's in it, so the × stays next to the
+                // thing it removes.
+                <div className="flex flex-wrap items-center gap-1.5 px-1 pt-2">
+                  <span className="ui-label shrink-0 text-[var(--faint)]">
+                    Queued
                   </span>
-                  <button
-                    onClick={() => unqueue(item.id)}
-                    title="Remove from the queue"
-                    className="shrink-0 rounded p-0.5 text-[var(--muted)] hover:text-[var(--text)]"
-                  >
-                    <IconX className="h-3.5 w-3.5" />
-                  </button>
+                  {queue.map((item) => (
+                    <span
+                      key={item.id}
+                      className="inline-flex max-w-full animate-scale-in items-center gap-1.5
+                                 rounded-full border border-[var(--border)] bg-[var(--panel-2)]
+                                 py-1 pl-2.5 pr-1.5"
+                    >
+                      <span className="min-w-0 truncate text-[length:var(--fs-xs)] text-[var(--text-soft)]">
+                        {item.text ||
+                          `${item.documents.length + item.attached.length} attachment(s)`}
+                      </span>
+                      <button
+                        onClick={() => unqueue(item.id)}
+                        title="Remove from the queue"
+                        className="shrink-0 rounded-full p-0.5 text-[var(--faint)]
+                                   hover:bg-[var(--hover)] hover:text-[var(--text)]"
+                      >
+                        <IconX className="h-3 w-3" />
+                      </button>
+                    </span>
+                  ))}
                 </div>
-              ))}
+              )}
 
               {/* Documents attached to this turn. A pasted article shows
                   what it is and how long it is — the two things you need to
