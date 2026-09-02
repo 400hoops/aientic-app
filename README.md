@@ -299,6 +299,18 @@ minted, so importing the same export twice makes a second copy rather than
 overwriting anything. Files this app itself wrote to `data/chats/` can be
 imported back the same way.
 
+## The palette
+
+Warm paper rather than white — every grey has a little yellow in it, which
+is what makes an hour of reading comfortable — and beyond that, one tone.
+No accent hue: "the thing you press" and "the thing you're on" are marked
+by weight and contrast, not colour. The only hue left is the danger state,
+because an error that reads as ordinary text isn't one.
+
+All of it lives in `src/index.css`, which also documents which token belongs
+on which surface. No component carries a colour of its own: there is no
+`#hex`, `rgba()` or Tailwind palette class anywhere in `src/*.jsx`.
+
 ## Security posture
 
 This is built for a trusted network: a LAN, or a tailnet. `/api/auth/login`
