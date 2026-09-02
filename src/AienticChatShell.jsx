@@ -1725,11 +1725,10 @@ export default function AienticChatShell({
               // m-auto centres it in the column once the column is at least as
               // tall as the scroller.
               <div className="m-auto text-center">
-                <p className="display animate-fade-up text-[length:var(--fs-lg)]
-                              leading-tight text-[var(--text)]">
+                <p className="animate-fade-up text-[length:var(--fs-lg)] text-[var(--text-soft)]">
                   {privateMode ? "You're in a private chat" : "What are we testing today?"}
                 </p>
-                <p className="mt-3 animate-fade-up text-[length:var(--fs-sm2)] text-[var(--muted)]
+                <p className="mt-2 animate-fade-up text-[length:var(--fs-sm2)] text-[var(--faint)]
                             [animation-delay:90ms]">
                   {privateMode
                     ? "Nothing here is written to the server. Closing this view is the delete."
@@ -2034,13 +2033,14 @@ export default function AienticChatShell({
             <div
               ref={setCardRef}
               {...dragProps}
-              // A thin stroke around a generously rounded box. The fill
-              // alone left the composer floating against the page with no
-              // edge to it — at the bottom of a long transcript there was
-              // nothing marking where the reading stopped and the writing
-              // started. The outline draws that line without turning it
-              // back into a form field.
-              className={`relative rounded-[32px] border bg-[var(--panel)] p-3.5
+              // The outlined card this used to be: a raised surface with a
+              // real edge and a hairline shadow, rounded enough to be soft
+              // and not so much that it stops reading as a field. The
+              // 32px-radius filled version that replaced it had no edge and
+              // no weight, which is what made the whole bottom of the
+              // screen go soft.
+              className={`relative rounded-2xl border bg-[var(--raised)] p-2.5
+                          shadow-[var(--shadow-card)] focus-within:border-[var(--focus)]
                           ${dragging
                             ? "border-dashed border-[var(--focus)]"
                             : "border-[var(--border-strong)]"}`}
@@ -2360,7 +2360,7 @@ export default function AienticChatShell({
                       stop();
                     }}
                     title="Stop generating"
-                    className="rounded-full bg-[var(--text)] p-2.5 text-[var(--bg)]
+                    className="rounded-lg bg-[var(--text)] p-2 text-[var(--bg)]
                                transition-transform duration-150 active:scale-95"
                   >
                     <IconStop className="h-4 w-4" />
@@ -2372,10 +2372,10 @@ export default function AienticChatShell({
                       (!input.trim() && !images.length && !docs.length) || !activeModel
                     }
                     title="Send"
-                    className="rounded-full bg-[var(--text)] p-2.5 text-[var(--bg)]
+                    className="rounded-lg bg-[var(--text)] p-2 text-[var(--bg)]
                              transition-[background-color,opacity,scale] duration-150
                              active:scale-95 hover:opacity-90 disabled:cursor-not-allowed
-                             disabled:bg-[var(--panel-2)] disabled:text-[var(--faint)]
+                             disabled:bg-[var(--border)] disabled:text-[var(--muted)]
                              disabled:active:scale-100"
                   >
                     <IconArrowUp className="h-4 w-4" />
