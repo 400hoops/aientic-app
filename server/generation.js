@@ -266,10 +266,11 @@ export async function streamCompletion({
   const withAttachments = (m) => {
     if (!m.attachments?.length) return m.content || "";
     const documents = m.attachments
-      .map(
-        (a) =>
-          `<document name="${String(a.name).replace(/"/g, "'")}">\n${a.text}\n</document>`
-      )
+      .map((a) => {
+        const name = String(a.name).replace(/"/g, "'");
+        const from = a.url ? ` url="${String(a.url).replace(/"/g, "'")}"` : "";
+        return `<document name="${name}"${from}>\n${a.text}\n</document>`;
+      })
       .join("\n\n");
     // The question last: it's what the model should still be holding when
     // it starts writing.

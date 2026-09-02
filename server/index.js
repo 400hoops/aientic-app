@@ -27,6 +27,7 @@ import {
   fileStem,
 } from "./chatFiles.js";
 import { parseUpload } from "./claudeImport.js";
+import { readUrl } from "./readpage.js";
 import {
   attachUser,
   requireAuth,
@@ -232,6 +233,12 @@ const sanitizeAttachments = (raw) => {
     budget -= clipped.length;
     out.push({
       name: String(item.name || "Pasted text").slice(0, MAX_LEN.label),
+      // Where it came from, when it came from somewhere: the bubble links
+      // it, and the model is told, so it can say "the piece says…" rather
+      // than inventing a citation.
+      ...(typeof item.url === "string" && /^https?:\/\//i.test(item.url)
+        ? { url: item.url.slice(0, MAX_LEN.baseUrl) }
+        : {}),
       text: clipped,
     });
   }
@@ -1174,6 +1181,39 @@ app.get("/api/conversations/:id/export", requireAuth, (req, res) => {
       ? conversationMarkdown(convo)
       : JSON.stringify(conversationJson(convo), null, 2)
   );
+});
+
+/* ---------- reading a link ----------------------------------------------- */
+
+/**
+ * Fetch a page and hand back its article, for attaching to a turn.
+ *
+ * The server does the fetching, not the browser: a page is cross-origin to
+ * the app, and the reader's own network is the wrong network to fetch from
+ * anyway. Every rule about *what* may be fetched lives in readpage.js — this
+ * route is only the door.
+ *
+ * Signed-in accounts only, and one at a time per account: fetching is the
+ * one thing here that makes the server talk to the open internet, and a
+ * loop of tabs shouldn't be able to turn it into a crawler.
+ */
+const reading = new Set();
+
+app.post("/api/read-url", requireAuth, async (req, res) => {
+  if (reading.has(req.user.id))
+    return bad(res, 429, "Still reading the last link — one at a time");
+
+  reading.add(req.user.id);
+  try {
+    const page = await readUrl(req.body?.url);
+    ok(res, { page });
+  } catch (err) {
+    // These messages are written to be read by the person who pasted the
+    // link ("that page answered 404"), so they go straight through.
+    bad(res, 400, err.name === "AbortError" ? "That page took too long" : err.message);
+  } finally {
+    reading.delete(req.user.id);
+  }
 });
 
 /* ---------- private chats ------------------------------------------------ */

@@ -101,6 +101,14 @@ export async function importChats(file) {
 export const exportChatUrl = (id, format = "md") =>
   `/api/conversations/${id}/export?format=${format}`;
 
+/**
+ * Fetch a link and get its article back, to attach to a turn. The server
+ * does the fetching — see server/readpage.js for why, and for what it
+ * refuses to fetch.
+ */
+export const readUrl = (url, signal) =>
+  request("/read-url", { method: "POST", body: { url }, signal });
+
 /* ---------- skills ------------------------------------------------------- */
 
 export const listSkills = () => request("/skills");

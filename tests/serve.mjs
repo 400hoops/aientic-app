@@ -26,6 +26,11 @@ fs.mkdirSync(dataDir, { recursive: true });
 
 process.env.AIENTIC_DATA_DIR = dataDir;
 process.env.AIENTIC_PORT = String(APP_PORT);
+// The page the link-reading test reads is served by the stub, on loopback —
+// which the reader refuses by default, correctly. The rig opts in; the
+// refusal itself is covered in tests/e2e/readpage.spec.js, which runs in
+// this file's *other* process, where the flag is not set.
+process.env.AIENTIC_ALLOW_PRIVATE_FETCH = "1";
 
 await startStubModel(STUB_PORT);
 await import("../server/index.js");

@@ -20,6 +20,7 @@ import {
   IconChevronRight,
   IconFileText,
   IconGhost,
+  IconLink,
   IconPanel,
   IconPlus,
   IconSparkles,
@@ -59,6 +60,16 @@ const isTextFile = (file) =>
 
 /** "1,240 words" — the useful measure of a thing you're asking about. */
 const wordCount = (text) => (text.trim().match(/\S+/g) || []).length;
+
+/**
+ * A paste that is nothing but a link.
+ *
+ * Deliberately strict: one URL, no surrounding words. "look at
+ * https://…" is a sentence with a link in it, and the person is mid-thought
+ * — going off to fetch it under them would be presumptuous. A bare link
+ * pasted into an empty composer is unambiguous.
+ */
+const BARE_URL = /^https?:\/\/[^\s]+$/i;
 
 /** The first line worth showing as a name, or a fallback. */
 const titleForPaste = (text) => {
@@ -914,6 +925,40 @@ export default function AienticChatShell({
 
   const removeDoc = (id) => setDocs((prev) => prev.filter((d) => d.id !== id));
 
+  /**
+   * Fetch a pasted link and attach what it says.
+   *
+   * The chip appears immediately, reading, and fills in with the page's own
+   * title and length — or with what went wrong, which stays on screen as a
+   * chip you dismiss rather than an error that replaces your turn.
+   */
+  const readLink = async (url) => {
+    const id = `url-${Date.now()}`;
+    const host = (() => {
+      try {
+        return new URL(url).hostname.replace(/^www\./, "");
+      } catch {
+        return url;
+      }
+    })();
+
+    setDocs((prev) => [...prev, { id, name: host, url, text: "", reading: true }]);
+    try {
+      const { page } = await api.readUrl(url);
+      setDocs((prev) =>
+        prev.map((d) =>
+          d.id === id
+            ? { id, name: page.title, url: page.url, text: page.text, truncated: page.truncated }
+            : d
+        )
+      );
+    } catch (err) {
+      setDocs((prev) =>
+        prev.map((d) => (d.id === id ? { ...d, reading: false, failed: err.message } : d))
+      );
+    }
+  };
+
   const onPaste = (e) => {
     const files = [...(e.clipboardData?.files || [])];
     if (files.length) {
@@ -922,9 +967,19 @@ export default function AienticChatShell({
       return;
     }
 
+    const text = (e.clipboardData?.getData("text/plain") || "").trim();
+
+    // A link on its own gets read: the server fetches the page and the
+    // article arrives as an attachment, so "what does this say?" works on
+    // something the model can actually see.
+    if (BARE_URL.test(text) && docs.length < MAX_DOCS) {
+      e.preventDefault();
+      readLink(text);
+      return;
+    }
+
     // A paste long enough to be a document becomes one, so the composer
     // stays a place you can see what you're asking.
-    const text = e.clipboardData?.getData("text/plain") || "";
     if (text.length < PASTE_AS_DOC_CHARS || docs.length >= MAX_DOCS) return;
     e.preventDefault();
     setDocs((prev) => [
@@ -962,7 +1017,7 @@ export default function AienticChatShell({
   const send = useCallback(async () => {
     const text = input.trim();
     const attached = images;
-    const documents = docs;
+    const documents = docs.filter((d) => d.text && !d.failed);
     // Text, photos, attached documents, or any mix — but not an empty turn.
     // A pasted article on its own is a perfectly good question: "read this".
     if (
@@ -1018,7 +1073,11 @@ export default function AienticChatShell({
         role: "user",
         content: text,
         images: attached.map((img) => img.url),
-        attachments: documents.map((d) => ({ name: d.name, text: d.text })),
+        // Only what was actually read: a link still loading, or one that
+        // couldn't be fetched, is not something to hand the model.
+        attachments: documents
+          .filter((d) => d.text && !d.failed)
+          .map((d) => ({ name: d.name, text: d.text, ...(d.url ? { url: d.url } : {}) })),
         createdAt: Date.now(),
       };
 
@@ -1519,18 +1578,26 @@ export default function AienticChatShell({
                           {m.attachments?.length > 0 && (
                             <span className="mb-1.5 flex flex-col gap-1">
                               {m.attachments.map((doc, j) => (
-                                <span
+                                <a
                                   key={`${m.id}-doc-${j}`}
-                                  title={doc.text?.slice(0, 400)}
-                                  className="flex items-center gap-1.5 rounded-md bg-[var(--panel)]
-                                             px-2 py-1 text-[length:var(--fs-xs)] text-[var(--text-soft)]"
+                                  href={doc.url || undefined}
+                                  target={doc.url ? "_blank" : undefined}
+                                  rel={doc.url ? "noreferrer" : undefined}
+                                  title={doc.url || doc.text?.slice(0, 400)}
+                                  className={`flex items-center gap-1.5 rounded-md bg-[var(--panel)]
+                                              px-2 py-1 text-[length:var(--fs-xs)] text-[var(--text-soft)]
+                                              ${doc.url ? "hover:bg-[var(--hover)]" : ""}`}
                                 >
-                                  <IconFileText className="h-[13px] w-[13px] shrink-0 text-[var(--muted)]" />
+                                  {doc.url ? (
+                                    <IconLink className="h-[13px] w-[13px] shrink-0 text-[var(--muted)]" />
+                                  ) : (
+                                    <IconFileText className="h-[13px] w-[13px] shrink-0 text-[var(--muted)]" />
+                                  )}
                                   <span className="min-w-0 flex-1 truncate">{doc.name}</span>
                                   <span className="ui-label shrink-0">
                                     {wordCount(doc.text || "").toLocaleString()} w
                                   </span>
-                                </span>
+                                </a>
                               ))}
                             </span>
                           )}
@@ -1744,16 +1811,28 @@ export default function AienticChatShell({
                   {docs.map((doc) => (
                     <div
                       key={doc.id}
-                      className="flex animate-scale-in items-center gap-2 rounded-lg border
-                                 border-[var(--border)] bg-[var(--panel)] px-2.5 py-1.5"
+                      className={`flex animate-scale-in items-center gap-2 rounded-lg border
+                                  bg-[var(--panel)] px-2.5 py-1.5
+                                  ${doc.failed
+                                    ? "border-[var(--danger-border)]"
+                                    : "border-[var(--border)]"}`}
                     >
-                      <IconFileText className="h-[15px] w-[15px] shrink-0 text-[var(--muted)]" />
+                      {doc.url ? (
+                        <IconLink className="h-[15px] w-[15px] shrink-0 text-[var(--muted)]" />
+                      ) : (
+                        <IconFileText className="h-[15px] w-[15px] shrink-0 text-[var(--muted)]" />
+                      )}
                       <span className="min-w-0 flex-1 truncate text-[length:var(--fs-sm2)]">
                         {doc.name}
                       </span>
-                      <span className="ui-label shrink-0">
-                        {doc.pasted ? "Pasted · " : ""}
-                        {wordCount(doc.text).toLocaleString()} words
+                      <span
+                        className={`ui-label shrink-0 ${doc.failed ? "text-[var(--danger)]" : ""}`}
+                      >
+                        {doc.reading
+                          ? "Reading…"
+                          : doc.failed
+                            ? doc.failed
+                            : `${doc.pasted ? "Pasted · " : ""}${wordCount(doc.text).toLocaleString()} words`}
                       </span>
                       <button
                         onClick={() => removeDoc(doc.id)}

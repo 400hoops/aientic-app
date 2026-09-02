@@ -152,6 +152,7 @@ on each device — see "A trusted cert without a public domain" below), add
 | `AIENTIC_TLS_CERT`, `AIENTIC_TLS_KEY` | unset (plain HTTP) | PEM cert/key paths — set both to serve HTTPS directly |
 | `AIENTIC_SECURE_COOKIES` | `off` | `Secure` attribute on the session cookie: `off` (works with self-signed / bare-IP setups), `auto` (set when the connection is TLS — correct once every client trusts the cert), `on` (always) |
 | `AIENTIC_TRUST_PROXY` | unset (no proxies trusted) | Set behind a reverse proxy so `X-Forwarded-*` is honoured: `1` for one proxy hop, or `loopback` / a CIDR / a list. Off by default on purpose: without it, a direct client's `X-Forwarded-For` would let anyone spoof `req.ip` and walk past the login rate limit |
+| `AIENTIC_ALLOW_PRIVATE_FETCH` | unset (public addresses only) | Lets the link reader fetch addresses inside your own network — an intranet wiki, a homelab dashboard. Off by default: with it on, anyone who can sign in can have the server fetch your router's admin page and read the reply back on screen |
 | `AIENTIC_FIRST_RESPONSE_TIMEOUT_MS` | `120000` | How long to wait for a model server to start responding before a run is failed with an error. Model loading and long-context prefill both happen before the first byte, so the default is generous; raise it for very large models loading on demand, or set `0` to disable the watchdog entirely |
 
 ## How it stores things
@@ -205,16 +206,34 @@ Chats can be pinned from the `…` on their row, which gives them their own
 section above Recents. Pinning deliberately doesn't touch the chat's
 updated time, so a pinned chat doesn't jump around when you use it.
 
-## Pasting an article
+## Pasting a link, or an article
 
-Paste more than a few hundred words into the composer and it becomes an
-attachment rather than filling the box: named after its first line, counted
-in words, removable, and — this is the part that matters — fenced in a
-`<document>` tag when it goes to the model, with your question after it.
-Without the fence a long paste is reliably answered as though the article
-had asked the question. Dropping a `.txt`, `.md`, `.csv` or `.log` on the
-composer does the same thing, and the `+` takes them on any model, not just
-one that can see photos.
+Paste a link on its own and the server fetches the page, pulls the article
+out of it, and attaches it to your turn — titled with the page's own title,
+counted in words, and linked, so "what does this say?" works on something
+the model can actually see. A link inside a sentence is left alone: you're
+mid-thought, not asking for a fetch.
+
+Paste more than a few hundred words and the same thing happens without the
+fetch: the text becomes an attachment rather than filling the box. Dropping
+a `.txt`, `.md`, `.csv` or `.log` on the composer does it too, and the `+`
+takes documents on any model, not just one that can see photos.
+
+Either way it reaches the model fenced in a `<document>` tag (with the URL,
+when there is one) and your question after it. Without the fence a long
+paste is reliably answered as though the article had asked the question.
+
+**What the link reader will not fetch.** It is the one thing here that makes
+the server open a connection to an address someone typed, and the server
+usually sits on a home network full of things that answer without asking who
+is calling. So: `http(s)` only, every hostname resolved *before* connecting
+and refused if any of its addresses is private, loopback, link-local or
+carrier-grade NAT, every redirect re-checked the same way, a 12-second
+timeout, a 3 MB cap, and HTML or text only. `AIENTIC_ALLOW_PRIVATE_FETCH=1`
+turns the address rule off, for reading an intranet wiki or a homelab
+dashboard — only sensible on a server whose accounts you all trust, since
+with it on anyone signed in can have the server fetch your router's admin
+page and show them the reply.
 
 ## Tests
 
