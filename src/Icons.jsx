@@ -7,6 +7,7 @@
 import {
   ArrowDown,
   ArrowUp,
+  Brain,
   Check,
   ChevronDown,
   ChevronRight,
@@ -46,6 +47,7 @@ const thin = (Base, name) => {
 
 export const IconArrowDown = thin(ArrowDown, "IconArrowDown");
 export const IconArrowUp = thin(ArrowUp, "IconArrowUp");
+export const IconBrain = thin(Brain, "IconBrain");
 export const IconCheck = thin(Check, "IconCheck");
 export const IconChevronDown = thin(ChevronDown, "IconChevronDown");
 export const IconChevronRight = thin(ChevronRight, "IconChevronRight");

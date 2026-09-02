@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import {
   IconDownload,
   IconArtifact,
+  IconBrain,
   IconLibrary,
   IconLogOut,
   IconMore,
@@ -67,7 +68,7 @@ export default function Sidebar({
   onFilter,
   onNewChat,
   onOpenSettings,
-  onOpenLibrary,
+  onOpenSection,
   onOpenArtifacts,
   onOpen,
   onDelete,
@@ -156,6 +157,18 @@ export default function Sidebar({
   // deliberately leaves updatedAt alone.
   const pinned = searching ? [] : conversations.filter((c) => c.pinned);
   const recents = searching ? conversations : conversations.filter((c) => !c.pinned);
+
+  const navButton = (label, Glyph, onClick) => (
+    <button
+      key={label}
+      onClick={onClick}
+      className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-[length:var(--fs-base)]
+                 text-[var(--text-soft)] hover:bg-[var(--hover)]"
+    >
+      <Glyph className="h-[18px] w-[18px] shrink-0" />
+      {label}
+    </button>
+  );
 
   const heading = (text) => (
     <div className="px-2.5 pb-1 pt-5 text-[length:var(--fs-sm)] text-[var(--muted)] first:pt-1">
@@ -320,28 +333,15 @@ export default function Sidebar({
           <IconPlus className="h-[18px] w-[18px] shrink-0" />
           New chat
         </button>
-        {/* The library is a place you go and look at, so it's listed as one.
-            It opens where it lives, in settings, rather than being a second
-            copy of the same screen. */}
-        {/* Things the model built, as opposed to things it said. They live
-            inside conversations, so this is a way back to them rather than a
-            place they're kept. */}
-        <button
-          onClick={onOpenArtifacts}
-          className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-[length:var(--fs-base)]
-                     text-[var(--text-soft)] hover:bg-[var(--hover)]"
-        >
-          <IconArtifact className="h-[18px] w-[18px] shrink-0" />
-          Artifacts
-        </button>
-        <button
-          onClick={onOpenLibrary}
-          className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-[length:var(--fs-base)]
-                     text-[var(--text-soft)] hover:bg-[var(--hover)]"
-        >
-          <IconLibrary className="h-[18px] w-[18px] shrink-0" />
-          Library
-        </button>
+{/* What the model knows about you, what it can look things up in,
+            and what it has built for you. All three are things you go and
+            tend to, so all three are listed — the first two open where they
+            live, in settings, rather than becoming a second copy of the
+            same screen; artifacts live inside conversations, so that one is
+            a way back to them. */}
+        {navButton("Artifacts", IconArtifact, onOpenArtifacts)}
+        {navButton("Memory", IconBrain, () => onOpenSection("Memory"))}
+        {navButton("Knowledge", IconLibrary, () => onOpenSection("Knowledge"))}
       </nav>
 
       <div className="px-3 pb-1 pt-4">
