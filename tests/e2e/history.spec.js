@@ -1,6 +1,6 @@
 import { expect, test } from "./test.js";
 
-import { ask, chatRow, sidebar } from "./helpers.js";
+import { ask, chatRow, sidebar, uniqueTitle } from "./helpers.js";
 
 test.describe("history", () => {
   test("searches inside messages, not just titles", async ({ page }) => {
@@ -16,9 +16,10 @@ test.describe("history", () => {
 
   test("pins a chat into its own section", async ({ page }) => {
     await page.goto('/new');
-    await ask(page, "Worth keeping around.");
+    const title = uniqueTitle("Worth keeping around.");
+    await ask(page, title);
 
-    const row = chatRow(page, "Worth keeping around.");
+    const row = chatRow(page, title);
     await row.hover();
     await row.getByRole("button", { name: "More" }).click();
     await page.getByRole("menu").getByText("Pin", { exact: true }).click();

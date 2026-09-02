@@ -6,6 +6,11 @@ RUN npm install
 COPY index.html vite.config.js ./
 COPY public ./public
 COPY src ./src
+# The artifact detector is imported by both halves of the app, so it lives
+# outside src/ and has to be copied into both stages. Leaving it out of this
+# one is a build failure; leaving it out of the runtime stage below is worse,
+# because that one only shows up when the server starts.
+COPY shared ./shared
 RUN npm run build
 
 # ---- runtime: express serves the API and the built assets ---------------
@@ -15,6 +20,7 @@ ENV NODE_ENV=production
 COPY server/package.json server/package-lock.json* ./server/
 RUN cd server && npm install --omit=dev
 COPY server ./server
+COPY shared ./shared
 COPY --from=web /app/dist ./dist
 
 # Run as the image's unprivileged user. /data is created (and owned) up

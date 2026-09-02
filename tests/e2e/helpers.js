@@ -40,6 +40,17 @@ export async function ask(page, text) {
   });
 }
 
+/**
+ * A title no earlier run can have used.
+ *
+ * The e2e data directory persists between runs, so "Worth keeping around."
+ * is three chats by the third run — and a spec that grabs the first row
+ * matching its title gets one from a previous run, in whatever state that
+ * run left it. Pinning one that is already pinned offers "Unpin", and the
+ * spec waits thirty seconds for a menu item that isn't there.
+ */
+export const uniqueTitle = (what) => `${what} #${Date.now().toString(36)}`;
+
 /** The sidebar row for a chat, by its title. */
 export const chatRow = (page, title) =>
   sidebar(page).locator(`[role="button"][aria-label="${title}"]`).first();

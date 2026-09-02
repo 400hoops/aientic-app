@@ -1,18 +1,19 @@
 import { expect, test } from "./test.js";
 
-import { ask, sidebar } from "./helpers.js";
+import { ask, sidebar, uniqueTitle } from "./helpers.js";
 
 test.describe("a conversation", () => {
   test("signs in, answers, and keeps the chat in the sidebar", async ({ page }) => {
     await page.goto('/new');
 
-    await ask(page, "What does this do?");
+    const title = uniqueTitle("What does this do?");
+    await ask(page, title);
     await expect(page.getByText("Short answer.")).toBeVisible();
 
     // The chat is named after the question and shows up under Today.
     await expect(sidebar(page).getByText("Today", { exact: true })).toBeVisible();
     await expect(
-      sidebar(page).locator('[role="button"][aria-label="What does this do?"]')
+      sidebar(page).locator(`[role="button"][aria-label="${title}"]`)
     ).toBeVisible();
 
   });
