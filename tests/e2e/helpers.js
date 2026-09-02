@@ -54,3 +54,41 @@ export const uniqueTitle = (what) => `${what} #${Date.now().toString(36)}`;
 /** The sidebar row for a chat, by its title. */
 export const chatRow = (page, title) =>
   sidebar(page).locator(`[role="button"][aria-label="${title}"]`).first();
+
+/* ---------- scrolling ----------------------------------------------------- */
+
+/**
+ * The transcript's scroll container.
+ *
+ * By attribute, not by class: the sidebar's chat list carries the same
+ * overflow utility, so a class selector matches it first and every
+ * measurement comes back from the wrong element — a scroller that never
+ * grows, which reads as "the test passed" for most of what's asserted here.
+ */
+export const transcript = (page) => page.locator("[data-transcript]");
+
+/** Where the view is, in the terms the scroll behaviour is written in. */
+export const scrollState = (page) =>
+  transcript(page).evaluate((el) => ({
+    top: Math.round(el.scrollTop),
+    height: el.scrollHeight,
+    client: el.clientHeight,
+    // Distance from the end. The auto-follow's whole job is keeping this at
+    // zero, and breaking away is this becoming and staying non-zero.
+    gap: Math.round(el.scrollHeight - el.scrollTop - el.clientHeight),
+  }));
+
+/**
+ * Fill the transcript past the height of the window.
+ *
+ * Every assertion here is about a scroller that has somewhere to scroll. An
+ * empty chat is shorter than the viewport, so scrollTop is pinned at 0 and
+ * gap at 0 no matter what the code does — the tests would pass without ever
+ * exercising a line of it.
+ */
+export async function padTranscript(page, turns = 8) {
+  for (let i = 0; i < turns; i++) await ask(page, `Padding ${i}`);
+  const { height, client } = await scrollState(page);
+  expect(height, "the transcript has to overflow for any of this to mean anything")
+    .toBeGreaterThan(client);
+}

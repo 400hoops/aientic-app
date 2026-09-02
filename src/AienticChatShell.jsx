@@ -1677,6 +1677,11 @@ export default function AienticChatShell({
         <div
           ref={setScrollRef}
           onScroll={onScroll}
+          // The scroll behaviour around this element is subtle enough to have
+          // its own spec, and the sidebar's list carries the same overflow
+          // class — so the tests get a name to hold onto rather than a
+          // presentational class that a restyle could quietly move.
+          data-transcript=""
           // overflow-y-scroll, not -auto: scrollbars are hidden outright
           // (index.css), so this reserves no gutter and draws nothing — it
           // simply keeps the scroll container's behaviour identical either
