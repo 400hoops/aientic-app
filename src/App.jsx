@@ -415,8 +415,9 @@ export default function App() {
         setSettingsOpen(true);
         closeOnPhone();
       }}
-      onOpenLibrary={() => {
-        setSettingsOpen("Knowledge");
+      // Settings is one long page; these open it at the part they name.
+      onOpenSection={(section) => {
+        setSettingsOpen(section);
         closeOnPhone();
       }}
       onOpen={openChat}
