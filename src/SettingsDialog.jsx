@@ -22,6 +22,32 @@ import ModelPicker from "./ModelPicker.jsx";
  * accounts and the server's models, and needs the admin role. This works
  * the same for everyone.
  */
+/**
+ * One band of the page.
+ *
+ * Declared out here rather than inside the dialog on purpose. A component
+ * defined in a render body is a *new type* on every render, so React throws
+ * away the whole subtree and builds it again — which, in a panel made of text
+ * boxes, means the focused input is destroyed after each keystroke and you
+ * can only ever type one letter.
+ */
+function Section({ title, description, children }) {
+  return (
+    <section
+      data-section={title}
+      className="scroll-mt-2 border-t border-[var(--border)] px-5 py-4 first:border-t-0"
+    >
+      <h3 className="text-[length:var(--fs-sm2)] font-medium">{title}</h3>
+      {description && (
+        <p className="mt-0.5 text-[length:var(--fs-xs)] text-[var(--muted)]">
+          {description}
+        </p>
+      )}
+      <div className="mt-3 space-y-3">{children}</div>
+    </section>
+  );
+}
+
 export default function SettingsDialog({
   user,
   focus = null,
@@ -291,26 +317,13 @@ export default function SettingsDialog({
 
   // Opened from the sidebar's Library entry: the dialog is one long page,
   // so it starts at the section that was asked for rather than at the top.
-  const focusRef = useRef(null);
+  const cardRef = useRef(null);
   useEffect(() => {
-    if (focus && focusRef.current)
-      focusRef.current.scrollIntoView({ block: "start", behavior: "auto" });
+    if (!focus) return;
+    cardRef.current
+      ?.querySelector(`[data-section="${CSS.escape(focus)}"]`)
+      ?.scrollIntoView({ block: "start", behavior: "auto" });
   }, [focus, documents]);
-
-  const Section = ({ title, description, children }) => (
-    <section
-      ref={title === focus ? focusRef : null}
-      className="scroll-mt-2 border-t border-[var(--border)] px-5 py-4 first:border-t-0"
-    >
-      <h3 className="text-[length:var(--fs-sm2)] font-medium">{title}</h3>
-      {description && (
-        <p className="mt-0.5 text-[length:var(--fs-xs)] text-[var(--muted)]">
-          {description}
-        </p>
-      )}
-      <div className="mt-3 space-y-3">{children}</div>
-    </section>
-  );
 
   return (
     <div
@@ -319,6 +332,7 @@ export default function SettingsDialog({
       className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--scrim)] p-4 animate-fade-in"
     >
       <div
+        ref={cardRef}
         role="dialog"
         aria-modal="true"
         aria-label="Settings"
