@@ -447,6 +447,18 @@ export default function AienticChatShell({
     const el = e.currentTarget;
     const gap = distanceToEnd(el);
     setAtBottom(gap < 120);
+
+    // Dragging the scrollbar fires neither a wheel nor a touch, so the
+    // position is the last way to notice someone has moved. Our own
+    // re-align puts the anchor exactly where it wants it, so a drift this
+    // large can only have come from a person.
+    if (pinnedRef.current && anchorRef.current) {
+      const drift =
+        anchorRef.current.getBoundingClientRect().top -
+        el.getBoundingClientRect().top -
+        TOP_GAP;
+      if (Math.abs(drift) > 80) pinnedRef.current = false;
+    }
     // Reaching the end again resumes following. Our own auto-scroll only runs
     // while following is already on, so this can't switch itself back on.
     if (gap < 24) followRef.current = true;
@@ -481,27 +493,35 @@ export default function AienticChatShell({
       pinnedRef.current = false;
     };
 
-    const onWheel = (e) => e.deltaY < 0 && breakAway();
+    // Any wheel, in either direction. It used to break away only on an
+    // upward one, from when the auto-scroll's only job was sticking to the
+    // bottom — scrolling *down* was where it was taking you anyway. Since
+    // the question pins to the top of the screen that's no longer true:
+    // scrolling down to read the answer as it arrives was being undone on
+    // the next token, which is what made the page feel stuck.
+    const onWheel = () => breakAway();
 
-    // Dragging the content downwards is scrolling upwards.
     let touchY = null;
     const onTouchStart = (e) => {
       touchY = e.touches[0]?.clientY ?? null;
     };
     const onTouchMove = (e) => {
       const y = e.touches[0]?.clientY ?? null;
-      if (touchY !== null && y !== null && y > touchY + 2) breakAway();
+      // Either direction, same reason as the wheel above.
+      if (touchY !== null && y !== null && Math.abs(y - touchY) > 2) breakAway();
       if (y !== null) touchY = y;
     };
 
     // On window, not the scroller: an unfocusable div never sees a keydown,
     // and the composer must keep its own arrow keys.
-    const up = new Set(["PageUp", "ArrowUp", "Home"]);
+    const scrollKeys = new Set([
+      "PageUp", "ArrowUp", "Home", "PageDown", "ArrowDown", "End", " ",
+    ]);
     const onKey = (e) => {
       const tag = e.target?.tagName;
       if (tag === "TEXTAREA" || tag === "INPUT" || e.target?.isContentEditable)
         return;
-      if (up.has(e.key)) breakAway();
+      if (scrollKeys.has(e.key)) breakAway();
     };
 
     el.addEventListener("wheel", onWheel, { passive: true });
@@ -1443,7 +1463,7 @@ export default function AienticChatShell({
         {/* The right of the bar was empty. It now says what is answering in
             this conversation and whether that model is loaded — the two
             facts you'd otherwise open the picker to check. */}
-        {conversation && activeModel && (
+        {!conversation && activeModel && (
           <span className="ml-auto flex shrink-0 items-center gap-2 pr-1 max-md:hidden">
             {modelStatus[activeModel.id] === "loaded" && (
               <span
@@ -1458,7 +1478,7 @@ export default function AienticChatShell({
             with the conversation rather than in the sidebar's list of
             destinations. No filled background — it's a mode toggle, not a
             button that does something on press. */}
-        {onTogglePrivate && (
+        {onTogglePrivate && !conversation && (
           <button
             onClick={onTogglePrivate}
             aria-label="Private chat"
@@ -1469,7 +1489,7 @@ export default function AienticChatShell({
                 : "Start a private chat — nothing is written down"
             }
             className={`shrink-0 rounded-md p-1.5 transition-colors
-                        ${conversation && activeModel ? "" : "ml-auto"}
+                        ${activeModel ? "" : "ml-auto"}
                         ${privateMode
                           ? "text-[var(--accent)]"
                           : "text-[var(--muted)] hover:text-[var(--text)]"}`}
@@ -1568,12 +1588,6 @@ export default function AienticChatShell({
 
             {messages.map((m, i) => {
               const isLast = i === messages.length - 1;
-              // The model that answered the turn before this one, so a
-              // repeated attribution can be left off.
-              const previousModel = messages
-                .slice(0, i)
-                .filter((x) => x.role === "assistant")
-                .pop()?.model;
 
               if (m.role === "user") {
                 const isAnchor = i === lastUserIndex;
@@ -1736,15 +1750,6 @@ export default function AienticChatShell({
                   className={`mb-10 animate-fade-up rounded-xl transition-colors duration-500
                               ${flash === m.id ? "bg-[var(--hover)]" : ""}`}
                 >
-                  {/* Who answered. The app lets you change model mid-chat,
-                      so a transcript with no attribution is a transcript you
-                      can't read back: two answers in the same thread can
-                      come from two different machines. Shown only where it's
-                      recorded, and only when it changes — a run of answers
-                      from one model is labelled once. */}
-                  {m.model && m.model !== previousModel && (
-                    <div className="ui-label mb-2">{m.model}</div>
-                  )}
                   <Reasoning text={m.reasoning} />
                   <div className="answer">
                     <Markdown>{m.content}</Markdown>
@@ -1870,7 +1875,7 @@ export default function AienticChatShell({
               // composer reads as a surface you type on instead of a form
               // field with a box around it. The border stays for the drag
               // state, which does need an edge to light up.
-              className={`relative rounded-[26px] border bg-[var(--panel)] p-3
+              className={`relative rounded-[32px] border bg-[var(--panel)] p-3.5
                           ${dragging
                             ? "border-[var(--focus)] border-dashed"
                             : "border-transparent"}`}

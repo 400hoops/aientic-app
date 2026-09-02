@@ -38,6 +38,12 @@ export const login = (username, password) =>
 export const setupAdmin = (username, password) =>
   request("/auth/setup", { method: "POST", body: { username, password } });
 export const logout = () => request("/auth/logout", { method: "POST" });
+/** Your own picture. No password: losing this to a passer-by costs a photo. */
+export const setAvatar = (avatar) =>
+  request("/account/avatar", { method: "PUT", body: { avatar } });
+export const removeAvatar = () =>
+  request("/account/avatar", { method: "DELETE" });
+
 /** Your own username and password. Both need the current password. */
 export const updateAccount = (patch) =>
   request("/account", { method: "PATCH", body: patch });
