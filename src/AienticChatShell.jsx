@@ -13,6 +13,7 @@ import { isPhone } from "./isPhone.js";
 import Markdown from "./Markdown.jsx";
 import MessageActions from "./MessageActions.jsx";
 import ModelPicker from "./ModelPicker.jsx";
+import SlashMenu from "./SlashMenu.jsx";
 import { forgetScroll, recallScroll, rememberScroll } from "./scrollMemory.js";
 import ArtifactPanel from "./ArtifactPanel.jsx";
 import { ArtifactContext } from "./ArtifactContext.js";
@@ -256,6 +257,53 @@ export default function AienticChatShell({
     setSkillIds((prev) =>
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
     );
+
+  /* ---------- the slash menu ---------------------------------------------
+   *
+   * Type `/` in an empty composer and the skills list opens, filtered as you
+   * keep typing. It's the same list as the button beside the composer, and
+   * it's deliberately both: a menu you have to know about isn't
+   * discoverable, and a menu you have to reach for isn't fast.
+   *
+   * Only at the very start of the message, and only while there's no space
+   * in what you've typed. A slash mid-sentence is a slash — dates, paths and
+   * and/or all contain one, and a picker that opens over those would be a
+   * menu that interrupts writing rather than one that helps it.
+   */
+  const slashQuery = useMemo(() => {
+    const match = /^\/(\S*)$/.exec(input);
+    return match ? match[1].toLowerCase() : null;
+  }, [input]);
+
+  // Escape closes it without clearing what was typed, so it stays closed
+  // until the slash goes away rather than reopening on the next letter.
+  const [slashDismissed, setSlashDismissed] = useState(false);
+  useEffect(() => {
+    if (slashQuery === null) setSlashDismissed(false);
+  }, [slashQuery]);
+
+  const slashMatches = useMemo(() => {
+    if (slashQuery === null || slashDismissed) return [];
+    if (!slashQuery) return optional;
+    return optional.filter(
+      (skill) =>
+        skill.name.toLowerCase().includes(slashQuery) ||
+        (skill.description || "").toLowerCase().includes(slashQuery)
+    );
+    // optional is rebuilt each render from skills; skills is the real input.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [skills, slashQuery, slashDismissed]);
+
+  const [slashAt, setSlashAt] = useState(0);
+  useEffect(() => setSlashAt(0), [slashQuery]);
+  const slashOpen = slashMatches.length > 0;
+
+  /** Attach the skill and take the `/query` back out of the composer. */
+  const pickSkill = useCallback((skill) => {
+    setSkillIds((prev) => (prev.includes(skill.id) ? prev : [...prev, skill.id]));
+    setInput("");
+    taRef.current?.focus();
+  }, []);
   const fileRef = useRef(null);
 
   const abortRef = useRef(null);
@@ -1457,6 +1505,25 @@ export default function AienticChatShell({
   // means there's no way to write a multi-line message without it firing
   // early. The send button is always right there for actually sending.
   const onKeyDown = (e) => {
+    // While the slash menu is up it owns the keys that move through it —
+    // including Enter, which picks rather than sends. Nothing else is
+    // intercepted, so typing to filter still just types.
+    if (slashOpen) {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        const step = e.key === "ArrowDown" ? 1 : slashMatches.length - 1;
+        return setSlashAt((at) => (at + step) % slashMatches.length);
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        return pickSkill(slashMatches[slashAt] || slashMatches[0]);
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        return setSlashDismissed(true);
+      }
+    }
+
     if (e.key === "Enter" && !e.shiftKey && !isPhone()) {
       e.preventDefault();
       send();
@@ -1949,6 +2016,15 @@ export default function AienticChatShell({
             className="pointer-events-none absolute inset-0 bg-[var(--bg)]"
           />
           <div className="pointer-events-auto relative mx-auto max-w-3xl">
+            {/* Anchored to the composer and drawn above it, so a long list
+                grows upward into the transcript rather than off-screen. */}
+            <SlashMenu
+              skills={slashMatches}
+              active={slashAt}
+              attached={skillIds}
+              onPick={pickSkill}
+              onHover={setSlashAt}
+            />
             <div
               ref={setCardRef}
               {...dragProps}
