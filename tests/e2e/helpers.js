@@ -29,15 +29,48 @@ export async function signIn(page, who = ADMIN) {
  */
 export const sidebar = (page) => page.locator("aside").first();
 
-/** Send a turn and wait for the answer to finish streaming. */
+/**
+ * Send a turn and wait for the answer to finish streaming.
+ *
+ * Counting messages, because the two obvious signals both lie.
+ *
+ * Waiting for a Regenerate button to appear was the original bug: it is
+ * rendered only on the *last* answer, so exactly one exists from the first
+ * turn onward and `.last()` was already visible the instant a new turn was
+ * sent. Every multi-turn spec returned before a single token had arrived and
+ * then measured a page it believed had settled — which is why the scrolling
+ * specs passed while the scrolling was wrong.
+ *
+ * Waiting for the Stop button to vanish is correct but cannot stand alone: a
+ * short stub reply is over before the check can look, so its appearance is
+ * never guaranteed.
+ *
+ * Two more messages on screen — the question and its answer — is the signal
+ * that this turn landed, and Stop being gone is the signal that it finished.
+ */
 export async function ask(page, text) {
   const composer = page.locator("textarea").first();
+  const before = await messageCount(page);
   await composer.click();
   await composer.fill(text);
   await page.keyboard.press("Enter");
-  await expect(page.getByRole("button", { name: "Regenerate" }).last()).toBeVisible({
-    timeout: 15_000,
-  });
+  await waitForAnswer(page, before);
+}
+
+/** Messages on screen right now, questions and answers alike. */
+export const messageCount = (page) => page.locator("[data-message-id]").count();
+
+/**
+ * Wait out the turn in flight, given the message count from before it was
+ * sent.
+ */
+export async function waitForAnswer(page, before, timeout = 60_000) {
+  await expect
+    .poll(() => messageCount(page), { timeout })
+    .toBeGreaterThan(before + 1);
+  await page
+    .getByRole("button", { name: "Stop generating" })
+    .waitFor({ state: "hidden", timeout });
 }
 
 /**
@@ -86,7 +119,7 @@ export const scrollState = (page) =>
  * gap at 0 no matter what the code does — the tests would pass without ever
  * exercising a line of it.
  */
-export async function padTranscript(page, turns = 8) {
+export async function padTranscript(page, turns = 5) {
   for (let i = 0; i < turns; i++) await ask(page, `Padding ${i}`);
   const { height, client } = await scrollState(page);
   expect(height, "the transcript has to overflow for any of this to mean anything")

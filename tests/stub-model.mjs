@@ -50,6 +50,39 @@ export function startStubModel(port = 0) {
         (m) => m.role === "system" && String(m.content).includes("<passage")
       );
       const long = /LONG/.test(asked);
+      // A real answer, at a real length and a real pace. "LONG" is a couple
+      // of seconds of one repeated sentence, which turned out to be far too
+      // small and far too plain to show how the view behaves: no headings,
+      // no code, no paragraph breaks, and over before the layout has to cope
+      // with anything. Several hundred words of actual markdown, streaming
+      // for fifteen-odd seconds, is what a person is looking at when they
+      // say the scrolling is wrong.
+      const huge = /HUGE/.test(asked);
+      const essay = [
+        "## What's going on here",
+        "",
+        ...Array.from({ length: 5 }, (_, i) =>
+          `This is paragraph ${i + 1} of an answer long enough to run past the ` +
+          "bottom of the window several times over, which is the only condition " +
+          "under which any of the scrolling behaviour actually matters. It keeps " +
+          "going for a few lines so that the transcript grows by a meaningful " +
+          "amount between one token and the next.\n"
+        ),
+        "### A code block, because answers have those",
+        "",
+        "```js",
+        ...Array.from({ length: 12 }, (_, i) => `const line${i} = ${i} * 2;`),
+        "```",
+        "",
+        "### And a list",
+        "",
+        ...Array.from({ length: 8 }, (_, i) => `- Item number ${i + 1} in the list.`),
+        "",
+        ...Array.from({ length: 4 }, (_, i) =>
+          `A closing paragraph, number ${i + 1}, to carry the answer past the ` +
+          "point where the spacer under the last question has been used up.\n"
+        ),
+      ].join("\n");
       // A whole HTML page, for the artifact tests: a fenced block that is a
       // finished thing rather than an example being discussed.
       const artifact = /ARTIFACT/.test(asked);
@@ -58,7 +91,9 @@ export function startStubModel(port = 0) {
         "<h1>Kettle timer</h1>\n".repeat(1) +
         "<p>A page.</p>\n".repeat(14) +
         "</body>\n</html>\n```\n\nThat should do it.";
-      const reply = artifact
+      const reply = huge
+        ? essay
+        : artifact
         ? page
         : passage
         ? "From your documents: " +
@@ -83,7 +118,7 @@ export function startStubModel(port = 0) {
         }
         const delta = { choices: [{ delta: { content: words[at++] + " " } }] };
         res.write(`data: ${JSON.stringify(delta)}\n\n`);
-      }, long ? 45 : 5);
+      }, huge ? 40 : long ? 45 : 5);
     });
   });
 

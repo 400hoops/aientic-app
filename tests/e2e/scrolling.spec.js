@@ -1,6 +1,13 @@
 import { expect, test } from "./test.js";
 
-import { ask, padTranscript, scrollState, transcript } from "./helpers.js";
+import {
+  ask,
+  messageCount,
+  padTranscript,
+  scrollState,
+  transcript,
+  waitForAnswer,
+} from "./helpers.js";
 
 /**
  * How the view behaves while an answer arrives.
@@ -19,14 +26,20 @@ import { ask, padTranscript, scrollState, transcript } from "./helpers.js";
  */
 test.use({ viewport: { width: 1000, height: 700 } });
 
+// These watch a real answer arrive rather than a two-second stub, and fill
+// the transcript first — comfortably past Playwright's 30s default. A
+// timeout here means the budget, not a fault in the app.
+test.describe.configure({ timeout: 120_000 });
+
 test.describe("following an answer", () => {
   test("a new answer is followed as it streams", async ({ page }) => {
     await page.goto("/new");
     await padTranscript(page);
 
     const composer = page.locator("textarea").first();
+    const before = await messageCount(page);
     await composer.click();
-    await composer.fill("Give me the LONG one");
+    await composer.fill("Explain it properly. HUGE");
     await page.keyboard.press("Enter");
 
     // Mid-stream, twice: the transcript is growing and the view is staying
@@ -47,9 +60,55 @@ test.describe("following an answer", () => {
     expect(await lengthOfAnswer()).toBeGreaterThan(grewFrom);
     expect(later.gap).toBeLessThan(24);
 
-    await expect(page.getByRole("button", { name: "Regenerate" }).last()).toBeVisible({
-      timeout: 20_000,
-    });
+    await waitForAnswer(page, before);
+    expect((await scrollState(page)).gap).toBeLessThan(24);
+  });
+
+  test("a long answer scrolls its question up and off, a short one does not", async ({
+    page,
+  }) => {
+    await page.goto("/new");
+    await padTranscript(page);
+
+    // The pin and the follow want opposite things once an answer outgrows the
+    // reserve under it: the pin holds the question at the top, the follow
+    // wants the end of the text. The reserve is what makes those the same
+    // place, so when it runs out the pin has to give way — otherwise the
+    // answer streams on below the bottom of the window, which is exactly
+    // what a real-length reply used to do.
+    const composer = page.locator("textarea").first();
+    const short = "Short question, short answer";
+    let before = await messageCount(page);
+    await composer.click();
+    await composer.fill(short);
+    await page.keyboard.press("Enter");
+    await waitForAnswer(page, before);
+
+    const offsetOf = (text) =>
+      page.evaluate((t) => {
+        const bubble = [...document.querySelectorAll("[data-message-id]")].find((b) =>
+          b.textContent.includes(t)
+        );
+        if (!bubble) return null;
+        const box = bubble.getBoundingClientRect();
+        const view = bubble.closest("[data-transcript]").getBoundingClientRect();
+        return Math.round(box.top - view.top);
+      }, text);
+
+    // Short answer: the reserve is never used up, so the question stays put.
+    expect(await offsetOf(short)).toBeLessThan(60);
+
+    const long = "Now explain it properly. HUGE";
+    before = await messageCount(page);
+    await composer.click();
+    await composer.fill(long);
+    await page.keyboard.press("Enter");
+    await waitForAnswer(page, before);
+
+    // Long answer: the question has been carried up and out of the window,
+    // and the end of the answer is what you are looking at.
+    const offset = await offsetOf(long);
+    expect(offset, "the question should have scrolled up and away").toBeLessThan(0);
     expect((await scrollState(page)).gap).toBeLessThan(24);
   });
 
@@ -60,8 +119,9 @@ test.describe("following an answer", () => {
     await padTranscript(page);
 
     const composer = page.locator("textarea").first();
+    const before = await messageCount(page);
     await composer.click();
-    await composer.fill("Give me the LONG one");
+    await composer.fill("Explain it properly. HUGE");
     await page.keyboard.press("Enter");
     await page.waitForTimeout(200);
 
@@ -82,9 +142,7 @@ test.describe("following an answer", () => {
 
     // Returning to the end opts back in, for the rest of the same answer.
     await transcript(page).evaluate((el) => el.scrollTo({ top: el.scrollHeight }));
-    await expect(page.getByRole("button", { name: "Regenerate" }).last()).toBeVisible({
-      timeout: 20_000,
-    });
+    await waitForAnswer(page, before);
     expect((await scrollState(page)).gap).toBeLessThan(24);
   });
 
@@ -93,8 +151,9 @@ test.describe("following an answer", () => {
     await padTranscript(page);
 
     const composer = page.locator("textarea").first();
+    const before = await messageCount(page);
     await composer.click();
-    await composer.fill("Give me the LONG one");
+    await composer.fill("Explain it properly. HUGE");
     await page.keyboard.press("Enter");
 
     // Sampled through the stream. Following the end of a growing transcript
@@ -105,9 +164,7 @@ test.describe("following an answer", () => {
       tops.push((await scrollState(page)).top);
       await page.waitForTimeout(120);
     }
-    await expect(page.getByRole("button", { name: "Regenerate" }).last()).toBeVisible({
-      timeout: 20_000,
-    });
+    await waitForAnswer(page, before);
 
     // Slack, because the spacer that pins a question to the top is measured
     // off live boxes and gives back a few pixels as it settles. What this is
@@ -126,6 +183,7 @@ test.describe("following an answer", () => {
     // block and then becomes a card of a different height once the message
     // is parsed, changing the transcript's height under the viewport.
     const composer = page.locator("textarea").first();
+    const before = await messageCount(page);
     await composer.click();
     await composer.fill("Draft me a page. ARTIFACT");
     await page.keyboard.press("Enter");
@@ -136,6 +194,7 @@ test.describe("following an answer", () => {
     await expect(page.getByRole("button", { name: /Kettle timer/ })).toBeVisible({
       timeout: 20_000,
     });
+    await waitForAnswer(page, before);
     await page.waitForTimeout(400); // the card has taken its final height
     expect((await scrollState(page)).gap).toBeLessThan(24);
   });

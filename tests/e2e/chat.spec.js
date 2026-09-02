@@ -62,6 +62,12 @@ test.describe("a conversation", () => {
 });
 
 test.describe("the queue", () => {
+  // Draining the queue is three turns end to end, and the wait for it is
+  // itself 30s — the same as the default budget for the whole test, so the
+  // test could never actually spend that allowance: it died as a bare
+  // "test timeout" instead of a legible assertion failure.
+  test.describe.configure({ timeout: 90_000 });
+
   test("messages typed mid-answer are queued and sent in order", async ({ page }) => {
     await page.goto("/new");
     const composer = page.locator("textarea").first();

@@ -189,6 +189,10 @@ export default function AienticChatShell({
   // of the viewport while its answer arrives underneath. Recomputed as the
   // answer grows, shrinking to nothing once it fills the screen on its own.
   const [tailSpace, setTailSpace] = useState(0);
+  // Read by the streaming follow, which runs on every token and must not
+  // re-subscribe to this to see it change.
+  const tailSpaceRef = useRef(0);
+  tailSpaceRef.current = tailSpace;
   const [images, setImages] = useState([]);
   const [preview, setPreview] = useState(null); // pending: { id, url (data URL) }
   const [imgError, setImgError] = useState(null);
@@ -732,7 +736,18 @@ export default function AienticChatShell({
     if (!streaming || !followRef.current) return;
     // Pinned: the question stays where it is and the answer fills in under
     // it. Only a re-align, in case something above it changed height.
-    if (pinnedRef.current) return pinAnchorToTop("auto");
+    //
+    // But only while there is still reserve beneath the answer to fill. The
+    // spacer is what makes "that question at the top" and "scrolled to the
+    // end" the same position; once the answer has used it up those are two
+    // different places, and re-pinning the question keeps the view at the
+    // first while the text arrives at the second. A short reply never
+    // reaches that point, which is why this held up under a stub and left a
+    // real answer streaming a page and a half below the window.
+    if (pinnedRef.current) {
+      if (tailSpaceRef.current > 0) return pinAnchorToTop("auto");
+      pinnedRef.current = false; // the reserve is gone; follow the end again
+    }
     const el = scrollRef.current;
     // Assigning scrollTop, not scrollTo({behavior:"auto"}): a smooth scroll
     // still in flight from the button would otherwise keep overriding this.
@@ -773,7 +788,8 @@ export default function AienticChatShell({
   // Applying the spacer moves the bottom; if the view was following it,
   // follow it to the new one.
   useEffect(() => {
-    if (pinnedRef.current) return pinAnchorToTop("auto");
+    if (pinnedRef.current && tailSpace > 0) return pinAnchorToTop("auto");
+    if (pinnedRef.current) pinnedRef.current = false;
     const el = scrollRef.current;
     if (el && followRef.current) el.scrollTo({ top: el.scrollHeight });
   }, [tailSpace, pinAnchorToTop]);
