@@ -18,7 +18,7 @@ import {
   IconTrash,
 } from "./Icons.jsx";
 import Wordmark from "./Wordmark.jsx";
-import { groupByDate, initial } from "./format.js";
+import { displayName, groupByDate, initial } from "./format.js";
 
 // The row "…" menu's own size, needed before it exists: the trigger works
 // out where to put it, and a menu near the bottom of the screen flips above
@@ -404,7 +404,7 @@ export default function Sidebar({
           </div>
           <div className="min-w-0 flex-1 text-left">
             <div className="truncate text-[length:var(--fs-sm2)] leading-tight">
-              {user.username}
+              {displayName(user.username)}
             </div>
           </div>
           <IconChevronDown

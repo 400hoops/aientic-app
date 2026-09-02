@@ -28,7 +28,7 @@ function CodeBlock({ language, code }) {
     <div className="my-4 overflow-hidden rounded-xl border border-[var(--border)]">
       <div className="flex items-center justify-between border-b border-[var(--border)]
                       bg-[var(--panel)] px-3 py-1.5">
-        <span className="ui-tight text-[11px] uppercase tracking-wide text-[var(--faint)]">
+        <span className="ui-tight text-[11.5px] text-[var(--faint)]">
           {language || "code"}
         </span>
         <button

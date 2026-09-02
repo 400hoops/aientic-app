@@ -35,6 +35,22 @@ export function relativeTime(ts) {
 export const initial = (name) => (name || "?").trim().charAt(0).toUpperCase();
 
 /**
+ * A username as it's shown, rather than as it's stored.
+ *
+ * Accounts are typed in lower case and matched case-insensitively, but a
+ * name printed back at someone is a name — "matt" in the corner of the
+ * screen reads like a database row. Only the first letter is touched: the
+ * rest is however they wrote it, so mcDonald and JJ survive intact.
+ *
+ * Display only. The stored username, the login form and the {{USER_NAME}}
+ * the model is given all keep the real value.
+ */
+export const displayName = (name) => {
+  const text = String(name || "").trim();
+  return text ? text.charAt(0).toUpperCase() + text.slice(1) : text;
+};
+
+/**
  * Which slab of the history a chat belongs to.
  *
  * The sidebar is a list of everything you've ever asked, and an unbroken

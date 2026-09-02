@@ -16,7 +16,9 @@ test.describe("admin is admin-only", () => {
       data: { ...NORMAL, role: "user" },
     });
 
-    await sidebar(page).getByRole("button", { name: new RegExp(ADMIN.username) }).click();
+    // Case-insensitive: usernames are stored as typed and shown with a
+    // capital, so the button reads "E2e-admin".
+    await sidebar(page).getByRole("button", { name: new RegExp(ADMIN.username, "i") }).click();
     await page.getByRole("menu").getByText("Sign out", { exact: true }).click();
 
     await signIn(page, NORMAL);
@@ -26,7 +28,7 @@ test.describe("admin is admin-only", () => {
     await expect(page).toHaveURL(/\/(new|chat\/)/);
 
     // And the account menu doesn't offer it.
-    await sidebar(page).getByRole("button", { name: new RegExp(NORMAL.username) }).click();
+    await sidebar(page).getByRole("button", { name: new RegExp(NORMAL.username, "i") }).click();
     const menu = page.getByRole("menu");
     await expect(menu.getByText("Settings", { exact: true })).toBeVisible();
     await expect(menu.getByText("Admin", { exact: true })).toHaveCount(0);
