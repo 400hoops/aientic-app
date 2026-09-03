@@ -213,6 +213,7 @@ export async function streamCompletion({
   history,
   user,
   clientTimeZone,
+  userMessageId,
 }) {
   const assistant = {
     id: uid(),
@@ -252,7 +253,16 @@ export async function streamCompletion({
   // race with a stale refetch and lose. Sending the real value over the same
   // connection that's already reliably delivering the stream removes the
   // guess (and the race) entirely.
-  sse(gen, "start", { id: assistant.id, title: conversation.title });
+  // userMessageId as well as the assistant's: the client renders the turn you
+  // just sent from a local echo with a placeholder id, and until it learns
+  // the real one that message cannot be deleted or edited — the request goes
+  // to /messages/local and comes back 404. Absent on a regenerate, where no
+  // new user turn was written.
+  sse(gen, "start", {
+    id: assistant.id,
+    title: conversation.title,
+    ...(userMessageId ? { userMessageId } : {}),
+  });
 
   // A user turn with photos is the upstream's vision format: an array of
   // content parts (text plus one image_url per photo, base64 data URLs —

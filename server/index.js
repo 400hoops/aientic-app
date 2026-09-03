@@ -1492,6 +1492,10 @@ app.post("/api/conversations/:id/stream", requireAuth, async (req, res) => {
   if (!endpoint) return bad(res, 400, "That model is no longer configured");
   convo.endpointId = endpoint.id;
 
+  // Set only when this request writes a new user turn — the client needs it
+  // to replace the placeholder id on the message it drew optimistically.
+  let userMessageId;
+
   if (regenerate) {
     // Re-answer the last user turn.
     while (
@@ -1511,8 +1515,9 @@ app.post("/api/conversations/:id/stream", requireAuth, async (req, res) => {
         400,
         `Messages must be at most ${MAX_LEN.content} characters`
       );
+    userMessageId = uid();
     convo.messages.push({
-      id: uid(),
+      id: userMessageId,
       role: "user",
       content: text || "",
       images,
@@ -1535,6 +1540,7 @@ app.post("/api/conversations/:id/stream", requireAuth, async (req, res) => {
     history: convo.messages.filter((m) => m.role !== "assistant" || m.content),
     user: req.user,
     clientTimeZone,
+    userMessageId,
   });
 });
 

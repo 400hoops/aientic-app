@@ -93,6 +93,25 @@ const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
 // Breathing room above a question pinned to the top of the viewport.
 const TOP_GAP = 24;
 
+/**
+ * The id a turn carries between being typed and being written down.
+ *
+ * The composer draws your message immediately rather than waiting for the
+ * round trip, so for a moment it exists only here and has no server id to
+ * name. Every action on a message addresses it by id, so this placeholder
+ * has to be swapped for the real one the instant the server reports it —
+ * see adoptLocalUserId.
+ *
+ * One per turn, not one constant. A private chat is never written down, so
+ * its turns keep these ids for good — and a single shared value meant every
+ * question in a private conversation answered to the same name. Deleting the
+ * third one deleted the first, because the lookup takes the first match.
+ */
+const LOCAL_PREFIX = "local:";
+let localTurns = 0;
+const nextLocalId = () => `${LOCAL_PREFIX}${++localTurns}`;
+const isLocalId = (id) => typeof id === "string" && id.startsWith(LOCAL_PREFIX);
+
 // The id a private chat answers to. It never reaches the server — see
 // /api/private/stream, which has no conversation to name — but the whole
 // shell is keyed on "which conversation is this", so one constant keeps
@@ -904,14 +923,38 @@ export default function AienticChatShell({
       return { ...prev, messages: msgs };
     });
 
+  /** Give the optimistic user echo the id the server just wrote it under. */
+  const adoptLocalUserId = (convoId, id) =>
+    setConversation((prev) => {
+      if (!prev || (convoId && prev.id !== convoId)) return prev;
+      // Backwards, and by hand rather than findLastIndex: that is ES2023,
+      // and this app is served to whatever browser is on the network.
+      let at = -1;
+      for (let i = prev.messages.length - 1; i >= 0; i--)
+        if (prev.messages[i].role === "user" && isLocalId(prev.messages[i].id)) {
+          at = i;
+          break;
+        }
+      if (at === -1) return prev;
+      const messages = [...prev.messages];
+      messages[at] = { ...messages[at], id };
+      return { ...prev, messages };
+    });
+
   const streamHandlers = useCallback(
     (convoId) => ({
       // title is authoritative from the server (index.js already applied
       // the rename before this fired) — not conditional on the current
       // title like the client-side guess this replaced, since that guess
       // could itself be stale and this shouldn't defer to it.
-      start: ({ id, title }) => {
+      start: ({ id, title, userMessageId }) => {
         patchLast(convoId, (m) => ({ ...m, id }));
+        // The turn you just sent was drawn from a local echo carrying a
+        // placeholder id, and it kept that id for the life of the
+        // conversation on screen — so deleting or editing your own message
+        // addressed /messages/local and came back 404, silently doing
+        // nothing. This is the first moment the real id exists.
+        if (userMessageId) adoptLocalUserId(convoId, userMessageId);
         if (title) {
           setConversation((prev) =>
             prev && prev.id === convoId ? { ...prev, title } : prev,
@@ -1268,7 +1311,7 @@ export default function AienticChatShell({
       // text for documents), so the bubble renders identically before the
       // refresh round-trip — and so the private path can send it as history.
       const turn = {
-        id: "local",
+        id: nextLocalId(),
         role: "user",
         content: text,
         images: attached.map((img) => img.url),
@@ -1634,7 +1677,12 @@ export default function AienticChatShell({
             with the conversation rather than in the sidebar's list of
             destinations. No filled background — it's a mode toggle, not a
             button that does something on press. */}
-        {onTogglePrivate && !conversation && (
+        {/* Also while the private chat is in progress, not only before it
+            starts. A private conversation becomes a conversation the moment
+            it opens, so !conversation alone hid the toggle immediately and
+            left no way out of private mode except the sidebar — the button's
+            own "Leave the private chat" title was unreachable. */}
+        {onTogglePrivate && (privateMode || !conversation) && (
           <button
             onClick={onTogglePrivate}
             aria-label="Private chat"
