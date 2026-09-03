@@ -321,6 +321,21 @@ th,
 .answer {
   font-size: var(--fs-body);
   line-height: 1.7;
+  /* Answers contain things with no spaces in them — a hash, a stack frame,
+     a long URL — and a run like that has no break opportunity, so it sets
+     the paragraph's minimum width and pushes the whole column wider than
+     the window. `anywhere` rather than `break-word` because these sit
+     inside flex columns: only `anywhere` lowers the min-content width, and
+     the min-content width is what a flex item refuses to shrink below. */
+  overflow-wrap: anywhere;
+}
+
+/* Code is the exception: a wrapped line changes what the code means, and
+   the block is already a horizontal scroller. Inline code stays breakable —
+   a long token in the middle of a sentence should not push the page out. */
+.answer pre,
+.answer pre code {
+  overflow-wrap: normal;
 }
 
 .answer code,

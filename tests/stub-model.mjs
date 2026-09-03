@@ -58,6 +58,16 @@ export function startStubModel(port = 0) {
       // for fifteen-odd seconds, is what a person is looking at when they
       // say the scrolling is wrong.
       const huge = /HUGE/.test(asked);
+      // An answer with nothing to wrap on: one very long token, and a URL
+      // with no spaces in it. Both are ordinary in real answers (a hash, a
+      // stack frame, a link) and both are what finds a missing break rule.
+      const unbreakable = /UNBREAKABLE/.test(asked);
+      const wall =
+        "Here is the identifier:\n\n" +
+        "abcdefghij".repeat(20) +
+        "\n\nAnd a link: https://example.com/" +
+        "a-very-long-path-segment/".repeat(10) +
+        "end";
       const essay = [
         "## What's going on here",
         "",
@@ -91,7 +101,9 @@ export function startStubModel(port = 0) {
         "<h1>Kettle timer</h1>\n".repeat(1) +
         "<p>A page.</p>\n".repeat(14) +
         "</body>\n</html>\n```\n\nThat should do it.";
-      const reply = huge
+      const reply = unbreakable
+        ? wall
+        : huge
         ? essay
         : artifact
         ? page
